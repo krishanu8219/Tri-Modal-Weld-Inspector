@@ -84,7 +84,7 @@ def prepare_data(split_df):
         label = row["label_code"]
         
         # Binary target: 0 for good (00), 1 for defect
-        binary_y = 0 if str(label) == "00" else 1
+        binary_y = 0 if str(label).zfill(2) == "00" else 1
         
         # For image extraction, we need the run configuration directory path.
         # It's usually the parent of csv_path or flac_path

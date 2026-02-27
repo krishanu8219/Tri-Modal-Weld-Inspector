@@ -1,8 +1,8 @@
 {
-    "macro_f1": 1.0,
-    "weighted_f1": 1.0,
-    "macro_precision": 1.0,
-    "macro_recall": 1.0,
+    "macro_f1": 0.9329422883859666,
+    "weighted_f1": 0.9050688612502243,
+    "macro_precision": 0.969283023070213,
+    "macro_recall": 0.9091954022988505,
     "classes": [
         "0",
         "1",

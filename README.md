@@ -8,8 +8,7 @@
 - `test_data`: anonymized evaluation set (`90` samples named `sample_0001` ... `sample_0090`).
 - Training-available labeled pool (`good_weld` + `defect_data_weld`) contains `2330` runs.
 - Each run/sample is multimodal and typically includes:
-- one sensor CSV, one FLAC audio file, one AVI video file, and an `images/` folder (usually 5 JPGs).
-- In `defect_data_weld`, a small number of runs have missing still images (`0` JPG in some `images/` folders), but CSV/audio/video are present.
+- one sensor CSV, one FLAC audio file, one AVI video file
 
 ## Weld Configuration Metadata
 
@@ -197,7 +196,7 @@ test_data/
 
 ---
 
-# Evaluation criteria (what you’ll score)
+# Evaluation criteria
 
 ## A) Model metrics (primary)
 

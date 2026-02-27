@@ -71,7 +71,7 @@ class DefectClassifierPipeline:
             return {
                 "pred_label_code": "00",
                 "p_defect": float(p_defect),
-                "type_confidence": float(1.0 - p_defect)
+                "type_confidence": None
             }
             
         # 2. Multi-class prediction

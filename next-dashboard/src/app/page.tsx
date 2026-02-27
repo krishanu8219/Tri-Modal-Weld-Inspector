@@ -371,14 +371,20 @@ export default function Dashboard() {
                         {inferData.inference.pred_label_code === "00" ? '✅ PASSED (Code 00)' : `⚠️ FAILED — ${LABEL_MAP[inferData.inference.pred_label_code] || 'Defect'} (${inferData.inference.pred_label_code})`}
                       </h2>
                       <div style={{ display: 'flex', gap: '2rem' }}>
-                        <div>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>P(Defect)</span>
-                          <p style={{ fontWeight: 700, fontSize: '1.1rem' }}>{(inferData.inference.p_defect * 100).toFixed(1)}%</p>
-                        </div>
-                        <div>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Confidence</span>
-                          <p style={{ fontWeight: 700, fontSize: '1.1rem' }}>{(inferData.inference.type_confidence * 100).toFixed(1)}%</p>
-                        </div>
+                        {inferData.inference.pred_label_code !== "00" && (
+                          <>
+                            <div>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>P(Defect)</span>
+                              <p style={{ fontWeight: 700, fontSize: '1.1rem' }}>{(inferData.inference.p_defect * 100).toFixed(1)}%</p>
+                            </div>
+                            {inferData.inference.type_confidence != null && (
+                              <div>
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Confidence</span>
+                                <p style={{ fontWeight: 700, fontSize: '1.1rem' }}>{(inferData.inference.type_confidence * 100).toFixed(1)}%</p>
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
 

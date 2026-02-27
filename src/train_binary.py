@@ -10,6 +10,7 @@ from sklearn.metrics import (
     average_precision_score, brier_score_loss, confusion_matrix
 )
 import joblib
+from imblearn.over_sampling import SMOTE
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -135,17 +136,29 @@ def train_and_evaluate(train_csv="train_split.csv", val_csv="val_split.csv", out
     X_val, y_val, val_ids = prepare_data(df_val)
     
     if len(np.unique(y_train)) == 1:
-        logging.warning("Training split has only ONE class (probably only good_weld is tracked currently in sample). Adding a dummy defect row for demonstration.")
-        # Replicate first row but switch label
+        logging.warning("Training split has only ONE class. Adding a dummy defect row for demonstration.")
         X_train = np.vstack([X_train, X_train[0]])
         y_train = np.append(y_train, 1 - y_train[0])
         
     if len(np.unique(y_val)) == 1:
         logging.warning("Validation split has only ONE class.")
     
-    # 2. Train baseline model & Calibration
-    logging.info("Training XGBoost Classifier...")
-    base_clf = XGBClassifier(n_estimators=200, random_state=42, scale_pos_weight=1.0, verbosity=0)
+    # 2a. Compute dynamic scale_pos_weight
+    n_good = np.sum(y_train == 0)
+    n_defect = np.sum(y_train == 1)
+    spw = n_good / max(n_defect, 1)
+    logging.info(f"Class distribution: good={n_good}, defect={n_defect}, scale_pos_weight={spw:.3f}")
+    
+    # 2b. Apply SMOTE oversampling to balance the training set
+    if len(np.unique(y_train)) > 1 and min(n_good, n_defect) >= 6:
+        logging.info("Applying SMOTE oversampling...")
+        smote = SMOTE(random_state=42, k_neighbors=min(5, min(n_good, n_defect) - 1))
+        X_train, y_train = smote.fit_resample(X_train, y_train)
+        logging.info(f"After SMOTE: good={np.sum(y_train==0)}, defect={np.sum(y_train==1)}")
+    
+    # 2c. Train baseline model & Calibration
+    logging.info("Training XGBoost Classifier with class imbalance handling...")
+    base_clf = XGBClassifier(n_estimators=200, random_state=42, scale_pos_weight=spw, verbosity=0)
     base_clf.fit(X_train, y_train)
     
     logging.info("Calibrating probabilities...")

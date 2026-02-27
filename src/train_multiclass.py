@@ -7,7 +7,9 @@ from xgboost import XGBClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import f1_score, precision_score, recall_score, classification_report
+from sklearn.utils.class_weight import compute_sample_weight
 import joblib
+from imblearn.over_sampling import SMOTE
 
 from src.train_binary import extract_sensor_features
 from src.audio_features import extract_audio_features
@@ -71,19 +73,31 @@ def train_multiclass_and_evaluate(train_csv="train_split.csv", val_csv="val_spli
     if len(np.unique(y_val)) < 2:
         logging.warning("Validation split has < 2 classes.")
     
-    logging.info("Training Multi-Class XGBoost Classifier with balanced weights...")
-    
     # XGBoost requires integer labels 0 to n_classes-1
     le = LabelEncoder()
     y_train_enc = le.fit_transform(y_train)
     y_val_enc = le.transform(y_val)
     
+    logging.info("Applying SMOTE oversampling for class balance...")
+    # SMOTE requires at least k_neighbors+1 samples per class
+    min_class_count = min(np.bincount(y_train_enc))
+    if min_class_count >= 6:
+        smote = SMOTE(random_state=42, k_neighbors=min(5, min_class_count - 1))
+        X_train, y_train_enc = smote.fit_resample(X_train, y_train_enc)
+        logging.info(f"After SMOTE: {len(X_train)} samples, distribution: {dict(zip(*np.unique(y_train_enc, return_counts=True)))}")
+    else:
+        logging.warning(f"Smallest class has only {min_class_count} samples — skipping SMOTE, using sample_weight instead.")
+    
+    # Compute balanced sample weights
+    sample_weights = compute_sample_weight('balanced', y_train_enc)
+    
+    logging.info("Training Multi-Class XGBoost Classifier with balanced weights...")
     base_clf = XGBClassifier(n_estimators=200, random_state=42, use_label_encoder=False, verbosity=0)
-    base_clf.fit(X_train, y_train_enc)
+    base_clf.fit(X_train, y_train_enc, sample_weight=sample_weights)
     
     logging.info("Calibrating multi-class probabilities...")
     try:
-        calibrated_clf = CalibratedClassifierCV(estimator=base_clf, method='sigmoid', cv=min(5, len(y_train)))
+        calibrated_clf = CalibratedClassifierCV(estimator=base_clf, method='sigmoid', cv=min(5, len(y_train_enc)))
         calibrated_clf.fit(X_train, y_train_enc)
     except Exception as e:
         logging.warning(f"Failed to calibrate using Sigmoid 5-fold CV: {e}. Falling back to uncalibrated classifier.")

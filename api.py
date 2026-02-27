@@ -86,6 +86,15 @@ def get_metrics():
         "pipeline": load_json("artifacts/pipeline_metrics.json"),
     }
 
+@app.get("/diagnostics")
+def get_diagnostics():
+    """Return train vs validation fit diagnostics."""
+    path = "artifacts/fit_diagnostics.json"
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return json.load(f)
+    return {}
+
 @app.get("/runs")
 def get_runs():
     if not os.path.exists("runs_summary.csv"):

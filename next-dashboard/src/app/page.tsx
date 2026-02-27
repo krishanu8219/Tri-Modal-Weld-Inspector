@@ -28,6 +28,7 @@ export default function Dashboard() {
   const [runs, setRuns] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>(null);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   // Inspector state
@@ -40,10 +41,12 @@ export default function Dashboard() {
       fetch(`${API}/runs`).then(r => r.json()).catch(() => ({ runs: [] })),
       fetch(`${API}/stats`).then(r => r.json()).catch(() => null),
       fetch(`${API}/metrics`).then(r => r.json()).catch(() => null),
-    ]).then(([runsData, statsData, metricsData]) => {
+      fetch(`${API}/diagnostics`).then(r => r.json()).catch(() => null),
+    ]).then(([runsData, statsData, metricsData, diagData]) => {
       setRuns(runsData.runs || []);
       setStats(statsData);
       setMetrics(metricsData);
+      setDiagnostics(diagData);
       setLoading(false);
     });
   }, []);
@@ -566,6 +569,99 @@ export default function Dashboard() {
                 <p style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Fixed Threshold</p>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>τ = {metrics?.pipeline?.best_pipeline_threshold?.toFixed(3) || '0.500'} (frozen at test-time)</p>
               </div>
+
+              {/* Overfitting / Underfitting Report */}
+              {diagnostics && (
+                <div className={`${styles.chartCard} glass`} style={{ marginTop: '1.5rem' }}>
+                  <div className={styles.chartHeader}>
+                    <h3>📈 Overfitting / Underfitting Report</h3>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Train vs Validation</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                    {/* Binary Model */}
+                    {diagnostics.binary && (
+                      <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                          <h4 style={{ margin: 0 }}>Binary Model</h4>
+                          <span style={{ padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: diagnostics.binary.status === 'good' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: diagnostics.binary.status === 'good' ? 'var(--success)' : '#f59e0b' }}>
+                            {diagnostics.binary.verdict}
+                          </span>
+                        </div>
+                        <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                              <th style={{ textAlign: 'left', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Metric</th>
+                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Train</th>
+                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Val</th>
+                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Gap</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[
+                              { name: 'Log Loss', train: diagnostics.binary.train_log_loss, val: diagnostics.binary.val_log_loss },
+                              { name: 'F1 Score', train: diagnostics.binary.train_f1, val: diagnostics.binary.val_f1 },
+                              { name: 'Accuracy', train: diagnostics.binary.train_accuracy, val: diagnostics.binary.val_accuracy },
+                            ].map((row, i) => {
+                              const gap = row.train - row.val;
+                              return (
+                                <tr key={i} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                  <td style={{ padding: '0.5rem 0', fontWeight: 500 }}>{row.name}</td>
+                                  <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.train.toFixed(4)}</td>
+                                  <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.val.toFixed(4)}</td>
+                                  <td style={{ textAlign: 'right', padding: '0.5rem 0', color: Math.abs(gap) > 0.05 ? '#f59e0b' : 'var(--success)', fontWeight: 600 }}>
+                                    {gap > 0 ? '+' : ''}{gap.toFixed(4)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Multiclass Model */}
+                    {diagnostics.multiclass && (
+                      <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                          <h4 style={{ margin: 0 }}>Multiclass Model</h4>
+                          <span style={{ padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: diagnostics.multiclass.status === 'good' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: diagnostics.multiclass.status === 'good' ? 'var(--success)' : '#f59e0b' }}>
+                            {diagnostics.multiclass.verdict}
+                          </span>
+                        </div>
+                        <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                              <th style={{ textAlign: 'left', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Metric</th>
+                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Train</th>
+                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Val</th>
+                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Gap</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[
+                              { name: 'Log Loss', train: diagnostics.multiclass.train_log_loss, val: diagnostics.multiclass.val_log_loss },
+                              { name: 'Macro F1', train: diagnostics.multiclass.train_f1, val: diagnostics.multiclass.val_f1 },
+                              { name: 'Accuracy', train: diagnostics.multiclass.train_accuracy, val: diagnostics.multiclass.val_accuracy },
+                            ].map((row, i) => {
+                              const gap = row.train - row.val;
+                              return (
+                                <tr key={i} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                  <td style={{ padding: '0.5rem 0', fontWeight: 500 }}>{row.name}</td>
+                                  <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.train.toFixed(4)}</td>
+                                  <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.val.toFixed(4)}</td>
+                                  <td style={{ textAlign: 'right', padding: '0.5rem 0', color: Math.abs(gap) > 0.05 ? '#f59e0b' : 'var(--success)', fontWeight: 600 }}>
+                                    {gap > 0 ? '+' : ''}{gap.toFixed(4)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

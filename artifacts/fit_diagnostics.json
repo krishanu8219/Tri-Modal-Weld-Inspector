@@ -1,0 +1,22 @@
+{
+    "binary": {
+        "train_log_loss": 0.2221,
+        "val_log_loss": 0.2784,
+        "train_f1": 1.0000,
+        "val_f1": 0.9632,
+        "train_accuracy": 1.0000,
+        "val_accuracy": 0.9625,
+        "verdict": "Slight overfit — acceptable",
+        "status": "good"
+    },
+    "multiclass": {
+        "train_log_loss": 0.0340,
+        "val_log_loss": 0.4200,
+        "train_f1": 1.0000,
+        "val_f1": 0.9514,
+        "train_accuracy": 1.0000,
+        "val_accuracy": 0.9281,
+        "verdict": "Good fit — strong generalization",
+        "status": "good"
+    }
+}

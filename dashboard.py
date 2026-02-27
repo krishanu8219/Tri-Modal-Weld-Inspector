@@ -85,7 +85,7 @@ if not valid_runs.empty and 'pipeline' in st.session_state:
             cols = st.columns(len(images))
             for i, img_path in enumerate(images):
                 with cols[i]:
-                    st.image(img_path, caption=f"Frame {os.path.basename(img_path)}", width='stretch')
+                    st.image(img_path, caption=f"Frame {os.path.basename(img_path)}", use_container_width=True)
         else:
             st.info("No visual frames available in this run's configuration folder.")
 

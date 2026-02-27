@@ -57,14 +57,16 @@ class WeldDatasetLoader:
                     })
         return runs
 
-    def validate_run(self, run_info):
+    def validate_run(self, run_info, fast_mode=True):
         """
         Validates the run and extracts durations.
+        If fast_mode is True, simply checks if files exist and are not empty,
+        skipping time-consuming librosa and cv2 checks.
         """
         report = {
-            "csv_exists": os.path.exists(run_info["csv_path"]),
-            "flac_exists": os.path.exists(run_info["flac_path"]),
-            "avi_exists": os.path.exists(run_info["avi_path"]),
+            "csv_exists": os.path.exists(run_info["csv_path"]) and os.path.getsize(run_info["csv_path"]) > 0,
+            "flac_exists": os.path.exists(run_info["flac_path"]) and os.path.getsize(run_info["flac_path"]) > 0,
+            "avi_exists": os.path.exists(run_info["avi_path"]) and os.path.getsize(run_info["avi_path"]) > 0,
             "csv_valid": False,
             "flac_valid": False,
             "avi_valid": False,
@@ -78,6 +80,13 @@ class WeldDatasetLoader:
             "error_msg": []
         }
         
+        if fast_mode:
+            report["csv_valid"] = report["csv_exists"]
+            report["flac_valid"] = report["flac_exists"]
+            report["avi_valid"] = report["avi_exists"]
+            report["has_all_modalities"] = report["csv_valid"] and report["flac_valid"] and report["avi_valid"]
+            return report
+            
         if report["csv_exists"]:
             try:
                 df = pd.read_csv(run_info["csv_path"])
@@ -117,14 +126,14 @@ class WeldDatasetLoader:
         
         return report
 
-    def load_dataset(self, run_validation=True):
+    def load_dataset(self, run_validation=True, fast_mode=True):
         runs = self.find_runs()
         df_runs = pd.DataFrame(runs)
         
         if run_validation and not df_runs.empty:
             validation_records = []
             for run in tqdm(runs, desc="Validating runs"):
-                validation_records.append(self.validate_run(run))
+                validation_records.append(self.validate_run(run, fast_mode=fast_mode))
             
             df_val = pd.DataFrame(validation_records)
             df_runs = pd.concat([df_runs, df_val], axis=1)
@@ -132,8 +141,14 @@ class WeldDatasetLoader:
         return df_runs
 
 if __name__ == "__main__":
-    loader = WeldDatasetLoader(["sampleData", "good_weld", "defect_data_weld", "test_data"])
-    df = loader.load_dataset(run_validation=True)
+    new_data_dirs = [
+        "sampleData", 
+        "../therness/hackathon data/good_weld", 
+        "../therness/hackathon data/defect-weld"
+    ]
+    loader = WeldDatasetLoader(new_data_dirs)
+    # Use fast mode to parse thousands of runs efficiently
+    df = loader.load_dataset(run_validation=True, fast_mode=True)
     if not df.empty:
         print(df.head())
         print(df["label_code"].value_counts())

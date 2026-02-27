@@ -1,6 +1,0 @@
-{
-    "best_pipeline_threshold": 0.26,
-    "final_score": 0.9532934424497046,
-    "binary_f1": 0.9671641791044776,
-    "type_macro_f1": 0.9324873374675452
-}

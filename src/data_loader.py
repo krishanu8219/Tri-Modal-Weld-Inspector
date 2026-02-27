@@ -143,8 +143,8 @@ class WeldDatasetLoader:
 if __name__ == "__main__":
     new_data_dirs = [
         "sampleData", 
-        "../therness/hackathon data/good_weld", 
-        "../therness/hackathon data/defect-weld"
+        "hackathon data/good_weld", 
+        "hackathon data/defect-weld"
     ]
     loader = WeldDatasetLoader(new_data_dirs)
     # Use fast mode to parse thousands of runs efficiently

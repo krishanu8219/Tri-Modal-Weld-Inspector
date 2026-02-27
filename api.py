@@ -94,6 +94,9 @@ def get_runs():
     df_runs = pd.read_csv("runs_summary.csv")
     valid_runs = df_runs[df_runs["has_all_modalities"] == True]
     
+    # Deduplicate by run_id (sampleData runs also exist in therness)
+    valid_runs = valid_runs.drop_duplicates(subset="run_id", keep="first")
+    
     # Replace NaN with None for JSON serialization
     valid_runs = valid_runs.replace({np.nan: None})
     

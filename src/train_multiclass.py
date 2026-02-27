@@ -91,17 +91,46 @@ def train_multiclass_and_evaluate(train_csv="train_split.csv", val_csv="val_spli
     # Compute balanced sample weights
     sample_weights = compute_sample_weight('balanced', y_train_enc)
     
-    logging.info("Training Multi-Class XGBoost Classifier with balanced weights...")
-    base_clf = XGBClassifier(n_estimators=200, random_state=42, use_label_encoder=False, verbosity=0)
-    base_clf.fit(X_train, y_train_enc, sample_weight=sample_weights)
+    # Hyperparameter tuning via RandomizedSearchCV
+    logging.info("Running RandomizedSearchCV for multiclass XGBoost hyperparameter tuning...")
+    param_dist = {
+        'n_estimators': [100, 200, 300, 500],
+        'max_depth': [3, 4, 5, 6, 7, 8],
+        'learning_rate': [0.01, 0.05, 0.1, 0.2, 0.3],
+        'min_child_weight': [1, 3, 5, 7],
+        'subsample': [0.6, 0.7, 0.8, 0.9, 1.0],
+        'colsample_bytree': [0.6, 0.7, 0.8, 0.9, 1.0],
+        'gamma': [0, 0.1, 0.2, 0.5],
+        'reg_alpha': [0, 0.01, 0.1, 1.0],
+        'reg_lambda': [0.5, 1.0, 2.0, 5.0],
+    }
     
-    logging.info("Calibrating multi-class probabilities...")
+    base_clf = XGBClassifier(random_state=42, use_label_encoder=False, verbosity=0)
+    
+    from sklearn.model_selection import RandomizedSearchCV
+    search = RandomizedSearchCV(
+        base_clf, param_dist,
+        n_iter=50,
+        scoring='f1_macro',
+        cv=3,
+        random_state=42,
+        n_jobs=-1,
+        verbose=1
+    )
+    search.fit(X_train, y_train_enc, sample_weight=sample_weights)
+    
+    best_clf = search.best_estimator_
+    logging.info(f"Best hyperparameters: {search.best_params_}")
+    logging.info(f"Best CV Macro F1: {search.best_score_:.4f}")
+    
+    # Calibrate the best model
+    logging.info("Calibrating multi-class probabilities on best model...")
     try:
-        calibrated_clf = CalibratedClassifierCV(estimator=base_clf, method='sigmoid', cv=min(5, len(y_train_enc)))
+        calibrated_clf = CalibratedClassifierCV(estimator=best_clf, method='sigmoid', cv=min(5, len(y_train_enc)))
         calibrated_clf.fit(X_train, y_train_enc)
     except Exception as e:
-        logging.warning(f"Failed to calibrate using Sigmoid 5-fold CV: {e}. Falling back to uncalibrated classifier.")
-        calibrated_clf = base_clf
+        logging.warning(f"Failed to calibrate: {e}. Falling back to uncalibrated best model.")
+        calibrated_clf = best_clf
         
     # 3. Evaluate multi-class
     logging.info("Evaluating on Validation set...")

@@ -3,7 +3,7 @@ import json
 import logging
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import (
     precision_score, recall_score, f1_score, roc_auc_score, 
@@ -14,6 +14,7 @@ import joblib
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 from src.audio_features import extract_audio_features
+from src.image_features import extract_image_features
 
 # Sensor columns commonly used for defects
 SENSOR_COLS = [
@@ -38,17 +39,30 @@ def extract_sensor_features(csv_path):
     for col in SENSOR_COLS:
         if col in df.columns and not df[col].empty:
             s = df[col]
+            diffs = s.diff().dropna()
             features.extend([
                 s.mean(),
                 s.std(),
                 s.min(),
                 s.max(),
                 s.median(),
-                s.skew()
+                s.skew(),
+                s.quantile(0.10) if not s.empty else 0.0,
+                s.quantile(0.25) if not s.empty else 0.0,
+                s.quantile(0.75) if not s.empty else 0.0,
+                s.quantile(0.90) if not s.empty else 0.0,
+                s.quantile(0.75) - s.quantile(0.25) if len(s) > 0 else 0.0, # IQR
+                s.max() - s.min() if len(s) > 0 else 0.0, # Range
+                diffs.mean() if len(diffs) > 0 else 0.0,
+                diffs.std() if len(diffs) > 0 else 0.0,
+                diffs.max() if len(diffs) > 0 else 0.0,
+                # End of run features (last 50 rows)
+                s.tail(50).mean() if len(s) > 0 else 0.0,
+                s.tail(50).std() if len(s) > 0 else 0.0
             ])
         else:
             # Missing channel fallback
-            features.extend([0.0] * 6)
+            features.extend([0.0] * 17)
             
     # filling NaNs with 0 (e.g. from skewness on flat lines or std on 1 row)
     features = np.nan_to_num(features, nan=0.0)
@@ -72,11 +86,16 @@ def prepare_data(split_df):
         # Binary target: 0 for good (00), 1 for defect
         binary_y = 0 if str(label) == "00" else 1
         
+        # For image extraction, we need the run configuration directory path.
+        # It's usually the parent of csv_path or flac_path
+        run_dir = os.path.dirname(csv_path)
+        
         sensor_f = extract_sensor_features(csv_path)
         audio_f = extract_audio_features(flac_path)
+        image_f = extract_image_features(run_dir)
         
         # Late Fusion logic (concatenate arrays)
-        combined_f = np.concatenate([sensor_f, audio_f])
+        combined_f = np.concatenate([sensor_f, audio_f, image_f])
         
         X.append(combined_f)
         y.append(binary_y)
@@ -125,8 +144,8 @@ def train_and_evaluate(train_csv="train_split.csv", val_csv="val_split.csv", out
         logging.warning("Validation split has only ONE class.")
     
     # 2. Train baseline model & Calibration
-    logging.info("Training Random Forest Classifier...")
-    base_clf = RandomForestClassifier(n_estimators=100, random_state=42, class_weight="balanced")
+    logging.info("Training XGBoost Classifier...")
+    base_clf = XGBClassifier(n_estimators=200, random_state=42, scale_pos_weight=1.0, verbosity=0)
     base_clf.fit(X_train, y_train)
     
     logging.info("Calibrating probabilities...")

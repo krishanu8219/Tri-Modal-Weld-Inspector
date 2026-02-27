@@ -36,6 +36,35 @@ def generate_submission(test_data_dir="test_data", output_csv="submission.csv"):
     # Sort strictly by sample_id to be neat
     df_submission = df_submission.sort_values(by="sample_id").reset_index(drop=True)
     
+    # ---------------------------------------------------------
+    # STRICT SUBMISSION VALIDATOR
+    # ---------------------------------------------------------
+    print("\n--- Validating Submission ---")
+    ALLOWED_LABELS = {"00", "01", "02", "06", "07", "08", "11"}
+    
+    # Check 1: Exactly 90 rows
+    if len(df_submission) != 90:
+        print(f"❌ VALIDATION FAILED: Expected exactly 90 rows, got {len(df_submission)}")
+        # We don't necessarily raise Exception if they are testing on fewer, but warn loudly
+        # The prompt instructed to fail loudly if rows != 90
+        raise ValueError(f"Submission requires exactly 90 rows. Found {len(df_submission)}.")
+        
+    # Check 2: Unique sample IDs
+    if df_submission["sample_id"].nunique() != len(df_submission):
+        raise ValueError("❌ VALIDATION FAILED: Duplicate sample_ids found.")
+        
+    # Check 3: Allowed Labels
+    invalid_labels = set(df_submission["pred_label_code"].astype(str).unique()) - ALLOWED_LABELS
+    if len(invalid_labels) > 0:
+        raise ValueError(f"❌ VALIDATION FAILED: Invalid labels predicted: {invalid_labels}. Allowed: {ALLOWED_LABELS}")
+        
+    # Check 4: Probabilities bounds
+    if (df_submission["p_defect"] < 0).any() or (df_submission["p_defect"] > 1).any():
+        raise ValueError("❌ VALIDATION FAILED: 'p_defect' values found outside [0.0, 1.0] range.")
+        
+    print("✅ All validation checks passed!")
+    # ---------------------------------------------------------
+    
     df_submission.to_csv(output_csv, index=False)
     print(f"\nSubmission generated successfully: {output_csv}")
     print(df_submission.head())

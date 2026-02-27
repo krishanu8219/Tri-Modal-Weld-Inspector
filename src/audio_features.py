@@ -8,12 +8,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 def extract_audio_features(flac_path, n_mfcc=13):
     """
-    Load a flac file and extract summary statistics from its MFCCs.
-    Returns a unified 1D numpy array.
-    Shape will be (n_mfcc * 4) representing Mean, Std, Min, Max.
-    For n_mfcc=13, output dimensionality = 52.
+    Load a flac file and extract summary statistics from its MFCCs 
+    plus spectral centroid, rolloff, zcr, and rms energy.
     """
-    feature_dim = n_mfcc * 4
+    # 4 stats for 13 mfccs + 4 stats for 13 delta mfccs
+    # + 4 stats each for centroid, rolloff, zcr, rms = 4 * 4 = 16
+    # Total dim = 52 + 52 + 16 = 120
+    feature_dim = (n_mfcc * 4 * 2) + 16
     
     if not os.path.exists(flac_path):
         return np.zeros(feature_dim)
@@ -28,15 +29,32 @@ def extract_audio_features(flac_path, n_mfcc=13):
             return np.zeros(feature_dim)
             
         mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
+        delta_mfccs = librosa.feature.delta(mfccs)
         
-        # mfccs shape is (n_mfcc, time_steps)
-        # Summarize across time
-        mean_mfcc = np.mean(mfccs, axis=1)
-        std_mfcc = np.std(mfccs, axis=1)
-        min_mfcc = np.min(mfccs, axis=1)
-        max_mfcc = np.max(mfccs, axis=1)
+        centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
+        rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)
+        zcr = librosa.feature.zero_crossing_rate(y)
+        rms = librosa.feature.rms(y=y)
         
-        combined_features = np.concatenate([mean_mfcc, std_mfcc, min_mfcc, max_mfcc])
+        def summarize(feat_matrix):
+            return np.concatenate([
+                np.mean(feat_matrix, axis=1),
+                np.std(feat_matrix, axis=1),
+                np.min(feat_matrix, axis=1),
+                np.max(feat_matrix, axis=1)
+            ])
+            
+        mfcc_summary = summarize(mfccs)
+        delta_summary = summarize(delta_mfccs)
+        centroid_summary = summarize(centroid)
+        rolloff_summary = summarize(rolloff)
+        zcr_summary = summarize(zcr)
+        rms_summary = summarize(rms)
+        
+        combined_features = np.concatenate([
+            mfcc_summary, delta_summary, centroid_summary, 
+            rolloff_summary, zcr_summary, rms_summary
+        ])
         
         # Replace NaN/inf if any
         combined_features = np.nan_to_num(combined_features, nan=0.0)

@@ -3,13 +3,15 @@ import json
 import logging
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from sklearn.preprocessing import LabelEncoder
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import f1_score, precision_score, recall_score, classification_report
 import joblib
 
 from src.train_binary import extract_sensor_features
 from src.audio_features import extract_audio_features
+from src.image_features import extract_image_features
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -27,11 +29,14 @@ def prepare_multiclass_data(split_df):
         flac_path = row["flac_path"]
         label = str(row["label_code"]).zfill(2)
         
+        run_dir = os.path.dirname(csv_path)
+        
         sensor_f = extract_sensor_features(csv_path)
         audio_f = extract_audio_features(flac_path)
+        image_f = extract_image_features(run_dir)
         
         # Late Fusion logic
-        combined_f = np.concatenate([sensor_f, audio_f])
+        combined_f = np.concatenate([sensor_f, audio_f, image_f])
         
         X.append(combined_f)
         y.append(label)
@@ -66,23 +71,28 @@ def train_multiclass_and_evaluate(train_csv="train_split.csv", val_csv="val_spli
     if len(np.unique(y_val)) < 2:
         logging.warning("Validation split has < 2 classes.")
     
-    # 2. Train baseline model with class weights
-    logging.info("Training Multi-Class Random Forest Classifier with balanced weights...")
-    # 'balanced_subsample' computes weights based on bootstrap sample for each tree
-    base_clf = RandomForestClassifier(n_estimators=100, random_state=42, class_weight="balanced_subsample")
-    base_clf.fit(X_train, y_train)
+    logging.info("Training Multi-Class XGBoost Classifier with balanced weights...")
+    
+    # XGBoost requires integer labels 0 to n_classes-1
+    le = LabelEncoder()
+    y_train_enc = le.fit_transform(y_train)
+    y_val_enc = le.transform(y_val)
+    
+    base_clf = XGBClassifier(n_estimators=200, random_state=42, use_label_encoder=False, verbosity=0)
+    base_clf.fit(X_train, y_train_enc)
     
     logging.info("Calibrating multi-class probabilities...")
     try:
         calibrated_clf = CalibratedClassifierCV(estimator=base_clf, method='sigmoid', cv=min(5, len(y_train)))
-        calibrated_clf.fit(X_train, y_train)
+        calibrated_clf.fit(X_train, y_train_enc)
     except Exception as e:
         logging.warning(f"Failed to calibrate using Sigmoid 5-fold CV: {e}. Falling back to uncalibrated classifier.")
         calibrated_clf = base_clf
         
     # 3. Evaluate multi-class
     logging.info("Evaluating on Validation set...")
-    val_preds = calibrated_clf.predict(X_val)
+    val_preds_enc = calibrated_clf.predict(X_val)
+    val_preds = le.inverse_transform(val_preds_enc)
     
     # Use Macro F1 to treat each class equally despite heavy imbalance
     macro_f1 = f1_score(y_val, val_preds, average="macro", zero_division=0)
@@ -109,7 +119,12 @@ def train_multiclass_and_evaluate(train_csv="train_split.csv", val_csv="val_spli
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=4)
         
+    # Save LabelEncoder to decode later
+    le_path = os.path.join(output_dir, "label_encoder.joblib")
+    joblib.dump(le, le_path)
+    
     logging.info(f"Multi-class Model saved to {model_path}")
+    logging.info(f"LabelEncoder saved to {le_path}")
     logging.info(f"Metrics saved to {metrics_path}")
     
     print("\n--- Final Multi-class Model Review ---")

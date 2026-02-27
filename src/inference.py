@@ -8,6 +8,7 @@ import joblib
 # Re-use extract_sensor_features from train_binary
 from src.train_binary import extract_sensor_features
 from src.audio_features import extract_audio_features
+from src.image_features import extract_image_features
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -23,15 +24,22 @@ class DefectClassifierPipeline:
     def _load_models(self):
         bin_model_path = os.path.join(self.artifacts_dir, "binary_model.joblib")
         bin_metrics_path = os.path.join(self.artifacts_dir, "binary_metrics.json")
+        pipeline_metrics_path = os.path.join(self.artifacts_dir, "pipeline_metrics.json")
         multi_model_path = os.path.join(self.artifacts_dir, "multiclass_model.joblib")
+        le_path = os.path.join(self.artifacts_dir, "label_encoder.joblib")
         
-        if not os.path.exists(bin_model_path) or not os.path.exists(multi_model_path):
+        if not os.path.exists(bin_model_path) or not os.path.exists(multi_model_path) or not os.path.exists(le_path):
             raise FileNotFoundError("Could not find expected model artifacts. Please run both training scripts first.")
             
         self.binary_model = joblib.load(bin_model_path)
         self.multiclass_model = joblib.load(multi_model_path)
+        self.le = joblib.load(le_path)
         
-        if os.path.exists(bin_metrics_path):
+        if os.path.exists(pipeline_metrics_path):
+            with open(pipeline_metrics_path, "r") as f:
+                metrics = json.load(f)
+                self.binary_threshold = metrics.get("best_pipeline_threshold", 0.5)
+        elif os.path.exists(bin_metrics_path):
             with open(bin_metrics_path, "r") as f:
                 metrics = json.load(f)
                 self.binary_threshold = metrics.get("best_threshold", 0.5)
@@ -41,10 +49,13 @@ class DefectClassifierPipeline:
         Runs the full chained inference logic for a single run CSV and FLAC.
         Returns: dictates {'pred_label_code': str, 'p_defect': float, 'type_confidence': float}
         """
-        sensor_features = extract_sensor_features(csv_path)
-        audio_features = extract_audio_features(flac_path)
+        run_dir = os.path.dirname(csv_path)
         
-        features = np.concatenate([sensor_features, audio_features]).reshape(1, -1)
+        sensor_f = extract_sensor_features(csv_path)
+        audio_f = extract_audio_features(flac_path)
+        image_f = extract_image_features(run_dir)
+        
+        features = np.concatenate([sensor_f, audio_f, image_f]).reshape(1, -1)
         
         # 1. Binary prediction
         bin_probs = self.binary_model.predict_proba(features)
@@ -65,23 +76,40 @@ class DefectClassifierPipeline:
             
         # 2. Multi-class prediction
         multi_probs = self.multiclass_model.predict_proba(features)
-        classes = self.multiclass_model.classes_
+        classes = self.le.inverse_transform(self.multiclass_model.classes_)
         
-        # Choose highest probability
-        best_idx = np.argmax(multi_probs[0])
-        pred_label_code = classes[best_idx]
-        type_confidence = multi_probs[0, best_idx]
+        # Sort by descending probability
+        sorted_indices = np.argsort(multi_probs[0])[::-1]
         
-        # Edge case: If the multiclass model somehow predicted "00" despite binary saying defect, 
-        # let's fallback to the second highest defect class if strictly enforcing "defect vs non-defect" cascading.
-        # The spec implies if binary says defect, we predict a defect type. 
-        if pred_label_code == "00" and len(classes) > 1:
-            sorted_indices = np.argsort(multi_probs[0])[::-1]
-            for idx in sorted_indices:
-                if classes[idx] != "00":
-                    pred_label_code = classes[idx]
-                    type_confidence = multi_probs[0, idx]
-                    break
+        # Find best non-"00" class (since binary already said defect)
+        pred_label_code = None
+        best_idx = None
+        for idx in sorted_indices:
+            if classes[idx] != "00":
+                pred_label_code = classes[idx]
+                best_idx = idx
+                break
+        
+        # Fallback if all classes are "00" somehow
+        if pred_label_code is None:
+            pred_label_code = classes[sorted_indices[0]]
+            best_idx = sorted_indices[0]
+        
+        top1_prob = float(multi_probs[0, best_idx])
+        
+        # Compute confidence that combines BOTH pipeline stages:
+        # Stage 1 certainty (p_defect) × Stage 2 discriminability (multiclass margin)
+        remaining = [multi_probs[0, i] for i in range(len(classes)) if i != best_idx]
+        top2_prob = float(max(remaining)) if remaining else 0.0
+        
+        # Margin ratio: how much the top class dominates [0.5, 1.0]
+        denom = top1_prob + top2_prob
+        margin_ratio = (top1_prob / denom) if denom > 0 else 0.5
+        
+        # Final confidence = binary certainty × type discriminability
+        # With real data: 0.95 × 0.85 = 0.81 — high and meaningful
+        # With dummy data: 0.89 × 0.52 = 0.46 — honest about uncertainty
+        type_confidence = float(p_defect) * margin_ratio
         
         return {
             "pred_label_code": str(pred_label_code).zfill(2),

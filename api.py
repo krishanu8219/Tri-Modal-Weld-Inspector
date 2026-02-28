@@ -254,3 +254,44 @@ def infer_run(run_id: str):
         "audio": flac_static_path,
         "sensor_telemetry": sensor_data
     }
+
+@app.get("/explain/{run_id}")
+def explain_run(run_id: str):
+    """Return SHAP feature importance breakdown explaining WHY the model flagged a run."""
+    if not os.path.exists("runs_summary.csv"):
+        raise HTTPException(status_code=404, detail="runs_summary.csv not found")
+    
+    df = pd.read_csv("runs_summary.csv")
+    match = df[df["run_id"] == run_id]
+    if match.empty:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    
+    run_data = match.iloc[0].to_dict()
+    csv_path = run_data["csv_path"]
+    flac_path = run_data["flac_path"]
+    run_dir = os.path.dirname(csv_path)
+    
+    try:
+        from src.train_binary import extract_sensor_features
+        from src.audio_features import extract_audio_features
+        from src.image_features import extract_image_features
+        from src.shap_explainer import explain_prediction
+        
+        sensor_f = extract_sensor_features(csv_path)
+        audio_f = extract_audio_features(flac_path)
+        image_f = extract_image_features(run_dir)
+        features = np.concatenate([sensor_f, audio_f, image_f])
+        
+        # Get prediction first
+        res = pipeline.infer_run(csv_path, flac_path)
+        
+        # Compute SHAP explanation
+        explanation = explain_prediction(features, res["pred_label_code"])
+        
+        return {
+            "run_id": run_id,
+            "prediction": res,
+            "explanation": explanation
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Explanation failed: {str(e)}")

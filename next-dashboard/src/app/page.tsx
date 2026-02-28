@@ -43,6 +43,9 @@ export default function Dashboard() {
   // Audio waveform state
   const [audioWaveform, setAudioWaveform] = useState<any>(null);
 
+  // SHAP explanation state
+  const [explanationData, setExplanationData] = useState<any>(null);
+
   useEffect(() => {
     Promise.all([
       fetch(`${API}/runs`).then(r => r.json()).catch(() => ({ runs: [] })),
@@ -63,6 +66,7 @@ export default function Dashboard() {
     setInferLoading(true);
     setInferData(null);
     setAudioWaveform(null);
+    setExplanationData(null);
     fetch(`${API}/infer/${run_id}`)
       .then(res => res.json())
       .then(data => {
@@ -73,6 +77,13 @@ export default function Dashboard() {
           fetch(`${API}/audio-waveform/${run_id}`)
             .then(r => r.json())
             .then(wf => setAudioWaveform(wf))
+            .catch(() => { });
+        }
+        // Fetch SHAP explanation for defective runs
+        if (data.inference?.pred_label_code !== '00') {
+          fetch(`${API}/explain/${run_id}`)
+            .then(r => r.json())
+            .then(exp => setExplanationData(exp?.explanation || null))
             .catch(() => { });
         }
       })
@@ -425,6 +436,47 @@ export default function Dashboard() {
                             )}
                           </div>
                         </div>
+
+                        {/* SHAP Explanation — Why Flagged? */}
+                        {!isPass && explanationData && explanationData.modality_contributions && (
+                          <div style={{ padding: '1.25rem', borderRadius: 'var(--radius-lg)', backgroundColor: 'rgba(139, 92, 246, 0.06)', border: '1px solid rgba(139, 92, 246, 0.2)' }}>
+                            <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem', color: '#a78bfa' }}>🧠 Why Flagged?</h3>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>SHAP analysis showing which modality contributed most to this prediction</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                              {(['sensor', 'audio', 'image'] as const).map(mod => {
+                                const data = explanationData.modality_contributions[mod];
+                                if (!data) return null;
+                                const colors: Record<string, string> = { sensor: '#3b82f6', audio: '#f59e0b', image: '#10b981' };
+                                const icons: Record<string, string> = { sensor: '📊', audio: '🔊', image: '📷' };
+                                return (
+                                  <div key={mod}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                                      <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{icons[mod]} {mod.charAt(0).toUpperCase() + mod.slice(1)}</span>
+                                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: colors[mod] }}>{data.percentage}%</span>
+                                    </div>
+                                    <div style={{ height: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px', overflow: 'hidden' }}>
+                                      <div style={{ height: '100%', width: `${data.percentage}%`, backgroundColor: colors[mod], borderRadius: '4px', transition: 'width 0.5s ease' }} />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {/* Top influential features */}
+                            {explanationData.top_sensor_features && explanationData.top_sensor_features.length > 0 && (
+                              <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(139, 92, 246, 0.15)' }}>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Top Influential Sensor Features</p>
+                                {explanationData.top_sensor_features.slice(0, 3).map((feat: any, i: number) => (
+                                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', padding: '0.3rem 0' }}>
+                                    <span style={{ color: 'var(--text-secondary)' }}>{feat.name}</span>
+                                    <span style={{ fontWeight: 600, color: feat.direction === 'defect' ? 'var(--danger)' : 'var(--success)', fontSize: '0.7rem' }}>
+                                      {feat.direction === 'defect' ? '↑ Defect' : '↓ Good'}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* Sensor Telemetry */}
                         {inferData.sensor_telemetry && Array.isArray(inferData.sensor_telemetry.values) && inferData.sensor_telemetry.values.length > 0 && (
@@ -909,7 +961,7 @@ export default function Dashboard() {
                           <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: LABEL_COLORS[code] || '#6b7280', marginRight: '0.5rem' }}></span>
                           {LABEL_MAP[code] || `Code ${code}`}
                         </td>
-                        <td>{r.csv_rows || '—'}</td>
+                        <td>{r.csv_rows != null ? r.csv_rows : '—'}</td>
                         <td style={{ color: r.flac_valid ? 'var(--success)' : 'var(--text-muted)' }}>{r.flac_valid ? '✓' : '✗'}</td>
                         <td style={{ color: r.avi_valid ? 'var(--success)' : 'var(--text-muted)' }}>{r.avi_valid ? '✓' : '✗'}</td>
                         <td style={{ color: r.has_all_modalities ? 'var(--success)' : 'var(--warning)' }}>{r.has_all_modalities ? '✓ Full' : '⚠ Partial'}</td>

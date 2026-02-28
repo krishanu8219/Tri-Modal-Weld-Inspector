@@ -18,6 +18,12 @@ class DefectClassifierPipeline:
         self.binary_model = None
         self.binary_threshold = 0.5
         self.multiclass_model = None
+        # Audio-Visual fallback models (for when CSV is missing)
+        self.binary_model_av = None
+        self.binary_threshold_av = 0.5
+        self.multiclass_model_av = None
+        self.le_av = None
+        self.has_av_models = False
         
         self._load_models()
         
@@ -43,21 +49,86 @@ class DefectClassifierPipeline:
             with open(bin_metrics_path, "r") as f:
                 metrics = json.load(f)
                 self.binary_threshold = metrics.get("best_threshold", 0.5)
+        
+        # Load Audio-Visual fallback models if available
+        av_bin_path = os.path.join(self.artifacts_dir, "binary_model_av.joblib")
+        av_multi_path = os.path.join(self.artifacts_dir, "multiclass_model_av.joblib")
+        av_le_path = os.path.join(self.artifacts_dir, "label_encoder_av.joblib")
+        av_metrics_path = os.path.join(self.artifacts_dir, "binary_av_metrics.json")
+        
+        if os.path.exists(av_bin_path) and os.path.exists(av_multi_path):
+            self.binary_model_av = joblib.load(av_bin_path)
+            self.multiclass_model_av = joblib.load(av_multi_path)
+            if os.path.exists(av_le_path):
+                self.le_av = joblib.load(av_le_path)
+            else:
+                self.le_av = self.le
+            if os.path.exists(av_metrics_path):
+                with open(av_metrics_path, "r") as f:
+                    self.binary_threshold_av = json.load(f).get("best_threshold", 0.5)
+            self.has_av_models = True
+            logging.info("Audio-Visual fallback models loaded (for no-CSV inference)")
                 
     def infer_run(self, csv_path, flac_path):
         """
-        Runs the full chained inference logic for a single run CSV and FLAC.
-        Returns: dictates {'pred_label_code': str, 'p_defect': float, 'type_confidence': float}
+        Runs inference for a single sample.
+        Auto-detects if CSV exists:
+          - If CSV exists: uses full tri-modal model (319 features)
+          - If no CSV: uses audio-visual fallback model (217 features)
         """
-        run_dir = os.path.dirname(csv_path)
+        run_dir = os.path.dirname(csv_path) if csv_path else os.path.dirname(flac_path)
+        csv_exists = os.path.exists(csv_path) if csv_path else False
         
-        sensor_f = extract_sensor_features(csv_path)
         audio_f = extract_audio_features(flac_path)
         image_f = extract_image_features(run_dir)
         
+        # ---- AUDIO-VISUAL MODE (no CSV) ----
+        if not csv_exists and self.has_av_models:
+            features_av = np.concatenate([audio_f, image_f])
+            
+            expected_dim = 217  # 120 audio + 97 image
+            if len(features_av) != expected_dim:
+                if len(features_av) < expected_dim:
+                    features_av = np.concatenate([features_av, np.zeros(expected_dim - len(features_av))])
+                else:
+                    features_av = features_av[:expected_dim]
+            
+            features_av = features_av.reshape(1, -1)
+            
+            # Binary
+            bin_probs = self.binary_model_av.predict_proba(features_av)
+            p_defect = float(bin_probs[0, 1]) if bin_probs.shape[1] > 1 else 0.0
+            
+            if p_defect < self.binary_threshold_av:
+                return {"pred_label_code": "00", "p_defect": p_defect, "type_confidence": None}
+            
+            # Multiclass
+            multi_probs = self.multiclass_model_av.predict_proba(features_av)
+            classes = self.le_av.inverse_transform(self.multiclass_model_av.classes_)
+            sorted_indices = np.argsort(multi_probs[0])[::-1]
+            
+            pred_label_code = None
+            best_idx = None
+            for idx in sorted_indices:
+                if classes[idx] != "00":
+                    pred_label_code = classes[idx]
+                    best_idx = idx
+                    break
+            
+            if pred_label_code is None:
+                pred_label_code = classes[sorted_indices[0]]
+                best_idx = sorted_indices[0]
+            
+            return {
+                "pred_label_code": str(pred_label_code).zfill(2),
+                "p_defect": float(p_defect),
+                "type_confidence": float(multi_probs[0, best_idx])
+            }
+        
+        # ---- TRI-MODAL MODE (with CSV) ----
+        sensor_f = extract_sensor_features(csv_path) if csv_exists else np.zeros(102)
         features = np.concatenate([sensor_f, audio_f, image_f])
         
-        # Defensive: ensure feature vector is exactly 319 dims (102 sensor + 120 audio + 97 image)
         expected_dim = 319
         if len(features) != expected_dim:
             logging.warning(
@@ -72,25 +143,9 @@ class DefectClassifierPipeline:
         
         features = features.reshape(1, -1)
         
-        # Use base XGBoost estimator (not wrapped CalibratedClassifier) for probabilities
-        # CalibratedClassifierCV crushes probs to exact 0/1, hiding meaningful variation
-        def get_base_proba(model, X):
-            """Extract predict_proba from the underlying XGBoost, bypassing calibration."""
-            try:
-                base = model.calibrated_classifiers_[0].estimator
-                return base.predict_proba(X)
-            except (AttributeError, IndexError):
-                return model.predict_proba(X)
-        
-        # 1. Binary prediction — use base estimator for real probabilities
-        bin_probs = get_base_proba(self.binary_model, features)
-        
-        # Determine probability of defect
-        if bin_probs.shape[1] > 1:
-            p_defect = bin_probs[0, 1]
-        else:
-            # edge case handling if base model saw 1 class
-            p_defect = 0.0
+        # 1. Binary prediction
+        bin_probs = self.binary_model.predict_proba(features)
+        p_defect = float(bin_probs[0, 1]) if bin_probs.shape[1] > 1 else 0.0
             
         if p_defect < self.binary_threshold:
             return {
@@ -99,15 +154,12 @@ class DefectClassifierPipeline:
                 "type_confidence": None
             }
             
-        # 2. Multi-class prediction — use base estimator 
-        raw_multi_probs = self.multiclass_model.predict_proba(features)
-        multi_probs = get_base_proba(self.multiclass_model, features) if hasattr(self.multiclass_model, 'calibrated_classifiers_') else raw_multi_probs
+        # 2. Multi-class prediction
+        multi_probs = self.multiclass_model.predict_proba(features)
         classes = self.le.inverse_transform(self.multiclass_model.classes_)
         
-        # Sort by descending probability
         sorted_indices = np.argsort(multi_probs[0])[::-1]
         
-        # Find best non-"00" class (since binary already said defect)
         pred_label_code = None
         best_idx = None
         for idx in sorted_indices:
@@ -116,16 +168,11 @@ class DefectClassifierPipeline:
                 best_idx = idx
                 break
         
-        # Fallback if all classes are "00" somehow
         if pred_label_code is None:
             pred_label_code = classes[sorted_indices[0]]
             best_idx = sorted_indices[0]
         
         top1_prob = float(multi_probs[0, best_idx])
-        
-        # type_confidence = raw multiclass probability of the predicted class
-        # This reflects how sure the model is about THIS specific defect type
-        # e.g. 0.68 → 68% it's "Burn Through" vs other defect types
         type_confidence = top1_prob
         
         return {

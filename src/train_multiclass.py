@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from xgboost import XGBClassifier
 from sklearn.preprocessing import LabelEncoder
-from sklearn.calibration import CalibratedClassifierCV
+# CalibratedClassifierCV removed — XGBoost native softmax gives proper probabilities
 from sklearn.metrics import f1_score, precision_score, recall_score, classification_report
 from sklearn.utils.class_weight import compute_sample_weight
 import joblib
@@ -123,18 +123,12 @@ def train_multiclass_and_evaluate(train_csv="train_split.csv", val_csv="val_spli
     logging.info(f"Best hyperparameters: {search.best_params_}")
     logging.info(f"Best CV Macro F1: {search.best_score_:.4f}")
     
-    # Calibrate the best model
-    logging.info("Calibrating multi-class probabilities on best model...")
-    try:
-        calibrated_clf = CalibratedClassifierCV(estimator=best_clf, method='sigmoid', cv=min(5, len(y_train_enc)))
-        calibrated_clf.fit(X_train, y_train_enc)
-    except Exception as e:
-        logging.warning(f"Failed to calibrate: {e}. Falling back to uncalibrated best model.")
-        calibrated_clf = best_clf
+    # Use the best XGBoost model directly (no calibration wrapper)
+    final_model = best_clf
         
     # 3. Evaluate multi-class
     logging.info("Evaluating on Validation set...")
-    val_preds_enc = calibrated_clf.predict(X_val)
+    val_preds_enc = final_model.predict(X_val)
     val_preds = le.inverse_transform(val_preds_enc)
     
     # Use Macro F1 to treat each class equally despite heavy imbalance
@@ -151,12 +145,12 @@ def train_multiclass_and_evaluate(train_csv="train_split.csv", val_csv="val_spli
         "weighted_f1": float(weighted_f1),
         "macro_precision": float(macro_precision),
         "macro_recall": float(macro_recall),
-        "classes": list(map(str, calibrated_clf.classes_))
+        "classes": list(map(str, final_model.classes_))
     }
     
     # 4. Save artifacts
     model_path = os.path.join(output_dir, "multiclass_model.joblib")
-    joblib.dump(calibrated_clf, model_path)
+    joblib.dump(final_model, model_path)
     
     metrics_path = os.path.join(output_dir, "multiclass_metrics.json")
     with open(metrics_path, "w") as f:

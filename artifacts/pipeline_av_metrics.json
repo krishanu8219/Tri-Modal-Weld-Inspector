@@ -1,0 +1,8 @@
+{
+  "binary_f1": 0.9848942598187311,
+  "type_macro_f1": 0.9959664180854556,
+  "final_score": 0.9893231231254209,
+  "best_threshold": 0.3799999999999999,
+  "features": "audio(120) + image(97) = 217 dims",
+  "note": "Trained without sensor features for test data that lacks CSVs"
+}

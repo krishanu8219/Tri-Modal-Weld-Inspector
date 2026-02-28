@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 import numpy as np
 from xgboost import XGBClassifier
-from sklearn.calibration import CalibratedClassifierCV
+# CalibratedClassifierCV removed — XGBoost native softmax gives proper probabilities
 from sklearn.metrics import (
     precision_score, recall_score, f1_score, roc_auc_score, 
     average_precision_score, brier_score_loss, confusion_matrix
@@ -102,6 +102,9 @@ def prepare_data(split_df):
         y.append(binary_y)
         metadata.append(row["run_id"])
         
+        if len(X) % 100 == 0:
+            logging.info(f"  prepare_data: {len(X)}/{len(split_df)} runs processed")
+        
     return np.array(X), np.array(y), metadata
 
 def compute_ece(y_true, y_prob, n_bins=10):
@@ -188,18 +191,13 @@ def train_and_evaluate(train_csv="train_split.csv", val_csv="val_split.csv", out
     logging.info(f"Best hyperparameters: {search.best_params_}")
     logging.info(f"Best CV F1: {search.best_score_:.4f}")
     
-    # 2d. Calibrate the best model
-    logging.info("Calibrating probabilities on best model...")
-    try:
-        calibrated_clf = CalibratedClassifierCV(estimator=best_clf, method='sigmoid', cv=min(5, len(y_train)))
-        calibrated_clf.fit(X_train, y_train)
-    except Exception as e:
-        logging.warning(f"Failed to calibrate: {e}. Falling back to uncalibrated best model.")
-        calibrated_clf = best_clf
+    # Use the best XGBoost model directly (no calibration wrapper)
+    # XGBoost's native predict_proba uses softmax which gives proper probabilities
+    final_model = best_clf
     
     # 3. Evaluate & tune threshold
     logging.info("Evaluating on Validation set...")
-    val_probs_all = calibrated_clf.predict_proba(X_val)
+    val_probs_all = final_model.predict_proba(X_val)
     if val_probs_all.shape[1] > 1:
         val_probs = val_probs_all[:, 1]
     else:
@@ -250,7 +248,7 @@ def train_and_evaluate(train_csv="train_split.csv", val_csv="val_split.csv", out
     
     # 4. Save artifacts
     model_path = os.path.join(output_dir, "binary_model.joblib")
-    joblib.dump(calibrated_clf, model_path)
+    joblib.dump(final_model, model_path)
     
     metrics_path = os.path.join(output_dir, "binary_metrics.json")
     with open(metrics_path, "w") as f:

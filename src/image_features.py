@@ -34,6 +34,10 @@ def extract_image_features(run_dir, num_frames=3):
     
     for f in selected_frames:
         try:
+            # Skip files > 10MB
+            if os.path.getsize(f) > 10 * 1024 * 1024:
+                continue
+                
             img = cv2.imread(f)
             if img is None:
                 continue
@@ -65,8 +69,3 @@ def extract_image_features(run_dir, num_frames=3):
         
     # Mean pool all collected frame embeddings
     return np.mean(embeddings, axis=0)
-
-if __name__ == "__main__":
-    test_dir = "sampleData/08-17-22-0011-00"
-    feats = extract_image_features(test_dir)
-    print(f"Extracted {len(feats)} image features. Feature preview: {feats[:5]}")

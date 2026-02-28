@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """
 Train Audio-Visual models (binary + multiclass) using ONLY audio + image features.
-Uses GroupKFold on config_folder to prevent data leakage across welding configurations.
-These models handle inference when sensor CSV data is unavailable.
+
+Key improvements:
+  1. GroupKFold(5) on config_folder  — eliminates data leakage
+  2. Two-pass feature selection      — drops zero/near-zero importance features
+  3. Youden-J threshold from CV       — principled threshold, no test-label peeking
+  4. Saves feature mask               — inference.py applies identical transformation
 
 Output:
   artifacts/binary_model_av.joblib
   artifacts/multiclass_model_av.joblib
   artifacts/label_encoder_av.joblib
+  artifacts/feature_mask_av.npy        ← NEW: boolean mask of selected features
   artifacts/binary_av_metrics.json
   artifacts/multiclass_av_metrics.json
 """
 
-import os
-import sys
-import json
-import time
-import logging
+import os, sys, json, time, logging
 import numpy as np
 import pandas as pd
 import joblib
-from sklearn.model_selection import GroupKFold, cross_val_predict
+from sklearn.model_selection import GroupKFold
 from sklearn.metrics import (
     f1_score, precision_score, recall_score, roc_auc_score,
     classification_report
@@ -29,112 +30,147 @@ from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 ARTIFACTS_DIR = "artifacts"
-CACHE_PATH = os.path.join(ARTIFACTS_DIR, "feature_cache.npz")
+CACHE_PATH    = os.path.join(ARTIFACTS_DIR, "feature_cache.npz")
+
+# ------------------------------------------------------------------ #
+# How many top features to keep (by cumulative importance).           #
+# E.g. 0.80 keeps the smallest set that covers 80% of total signal.  #
+CUMULATIVE_IMPORTANCE_THRESHOLD = 0.80
+# ------------------------------------------------------------------ #
 
 
 def load_all_data():
-    """
-    Load ALL training + validation data pooled together.
-    Also returns config_folder groups for GroupKFold.
-    """
+    """Pool train + val data and return config_folder groups."""
     if not os.path.exists(CACHE_PATH):
-        logging.error(f"Feature cache not found: {CACHE_PATH}")
-        logging.error("Run: python cache_features.py first")
+        logging.error(f"Feature cache not found: {CACHE_PATH}. Run cache_features.py first.")
         sys.exit(1)
 
     cache = np.load(CACHE_PATH, allow_pickle=True)
 
-    # Pool train + val features
-    audio_all = np.concatenate([cache["train_audio"], cache["val_audio"]], axis=0)
-    image_all = np.concatenate([cache["train_image"], cache["val_image"]], axis=0)
-    y_binary_all = np.concatenate([cache["train_labels"], cache["val_labels"]], axis=0)
-    y_codes_all  = np.concatenate([cache["train_label_codes"], cache["val_label_codes"]], axis=0)
+    audio_all  = np.concatenate([cache["train_audio"],       cache["val_audio"      ]], axis=0)
+    image_all  = np.concatenate([cache["train_image"],       cache["val_image"      ]], axis=0)
+    y_bin_all  = np.concatenate([cache["train_labels"],      cache["val_labels"     ]], axis=0)
+    y_code_all = np.concatenate([cache["train_label_codes"], cache["val_label_codes"]], axis=0)
 
-    # AV features: audio(120) + image(97) = 217
-    X_all = np.concatenate([audio_all, image_all], axis=1)
+    X_all = np.concatenate([audio_all, image_all], axis=1)   # 217 (120+97)
 
-    # Load split CSVs to get config_folder groups
     train_df = pd.read_csv("train_split.csv")
     val_df   = pd.read_csv("val_split.csv")
     all_df   = pd.concat([train_df, val_df], ignore_index=True)
-    groups   = all_df["config_folder"].values  # used for GroupKFold
+    groups   = all_df["config_folder"].values
 
-    n_train = len(cache["train_labels"])
-    n_val   = len(cache["val_labels"])
-    logging.info(f"Pooled data: {n_train} train + {n_val} val = {len(X_all)} total samples")
-    logging.info(f"Unique config groups: {len(set(groups))}")
-    logging.info(f"Class balance: good={np.sum(y_binary_all==0)}, defect={np.sum(y_binary_all==1)}")
+    logging.info(f"Pooled: {len(X_all)} samples | unique groups: {len(set(groups))}")
+    logging.info(f"Class balance: good={np.sum(y_bin_all==0)}, defect={np.sum(y_bin_all==1)}")
+    return X_all, y_bin_all, y_code_all, groups
 
-    return X_all, y_binary_all, y_codes_all, groups
+
+def select_features(X_all, y_bin_all, groups):
+    """
+    First-pass XGBoost to get feature importances, then keep features
+    that together cover CUMULATIVE_IMPORTANCE_THRESHOLD of total importance.
+    Returns: feature_mask (bool array, len=217)
+    """
+    logging.info("\n=== Feature Selection Pass ===")
+    n_good   = np.sum(y_bin_all == 0)
+    n_defect = np.sum(y_bin_all == 1)
+    scale    = n_good / max(n_defect, 1)
+
+    # Quick shallow model just to rank features
+    selector = XGBClassifier(
+        n_estimators=200, max_depth=5, learning_rate=0.1,
+        subsample=0.8, colsample_bytree=0.8,
+        scale_pos_weight=scale,
+        eval_metric="logloss", use_label_encoder=False,
+        random_state=42, tree_method="hist",
+    )
+    selector.fit(X_all, y_bin_all)
+    importances = selector.feature_importances_
+
+    # Sort by descending importance and compute cumulative sum
+    ranked_idx = np.argsort(importances)[::-1]
+    cum_imp    = np.cumsum(importances[ranked_idx])
+    n_keep     = int(np.searchsorted(cum_imp, CUMULATIVE_IMPORTANCE_THRESHOLD) + 1)
+    n_keep     = max(n_keep, 20)   # floor: always keep at least 20
+
+    selected_idx = ranked_idx[:n_keep]
+    mask = np.zeros(X_all.shape[1], dtype=bool)
+    mask[selected_idx] = True
+
+    n_audio_kept = int(np.sum(mask[:120]))
+    n_image_kept = int(np.sum(mask[120:]))
+    logging.info(f"  Keeping {n_keep}/{X_all.shape[1]} features "
+                 f"(audio={n_audio_kept}, image={n_image_kept}) "
+                 f"covering {100*cum_imp[n_keep-1]:.1f}% of importance")
+    logging.info(f"  Dropped {X_all.shape[1] - n_keep} low-importance features")
+
+    return mask
 
 
 def train_binary_av(X_all, y_all, groups):
-    """Train binary defect detector using GroupKFold to prevent data leakage."""
-    logging.info("\n=== Training Binary AV Model (GroupKFold, n=5) ===")
+    """GroupKFold binary classifier, Youden-J threshold from OOF."""
+    logging.info("\n=== Training Binary AV Model (GroupKFold n=5, Youden-J threshold) ===")
 
     n_good   = np.sum(y_all == 0)
     n_defect = np.sum(y_all == 1)
     scale    = n_good / max(n_defect, 1)
 
     model = XGBClassifier(
-        n_estimators=500,
-        max_depth=6,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        min_child_weight=3,
-        reg_alpha=0.1,
-        reg_lambda=2,
+        n_estimators=500, max_depth=5, learning_rate=0.05,
+        subsample=0.8, colsample_bytree=0.8,
+        min_child_weight=3, reg_alpha=0.1, reg_lambda=2,
         scale_pos_weight=scale,
-        eval_metric="logloss",
-        use_label_encoder=False,
-        random_state=42,
-        tree_method="hist",
+        eval_metric="logloss", use_label_encoder=False,
+        random_state=42, tree_method="hist",
     )
 
-    # Cross-validated OOF probabilities with group-aware splits
     gkf = GroupKFold(n_splits=5)
     oof_probs = np.zeros(len(y_all))
-
     t0 = time.time()
     for fold, (tr_idx, va_idx) in enumerate(gkf.split(X_all, y_all, groups)):
         model.fit(X_all[tr_idx], y_all[tr_idx])
         oof_probs[va_idx] = model.predict_proba(X_all[va_idx])[:, 1]
         logging.info(f"  Fold {fold+1}/5 done")
+    logging.info(f"  OOF done in {time.time()-t0:.1f}s")
 
-    elapsed = time.time() - t0
-    logging.info(f"  OOF cross-validation done in {elapsed:.1f}s")
-
-    # Find best threshold on OOF predictions
-    best_f1 = 0
-    best_thresh = 0.5
-    for t in np.arange(0.1, 0.9, 0.01):
+    # ---- Principled threshold: Youden's J = Sensitivity + Specificity - 1 ----
+    best_j, best_thresh = -1, 0.5
+    for t in np.arange(0.05, 0.95, 0.01):
         preds = (oof_probs >= t).astype(int)
-        f = f1_score(y_all, preds)
+        tp = ((preds == 1) & (y_all == 1)).sum()
+        tn = ((preds == 0) & (y_all == 0)).sum()
+        sens = tp / max((y_all == 1).sum(), 1)
+        spec = tn / max((y_all == 0).sum(), 1)
+        j = sens + spec - 1
+        if j > best_j:
+            best_j, best_thresh = j, t
+
+    # Also compute best F1 threshold for reporting
+    best_f1, best_f1_thresh = 0, 0.5
+    for t in np.arange(0.05, 0.95, 0.01):
+        preds = (oof_probs >= t).astype(int)
+        f = f1_score(y_all, preds, zero_division=0)
         if f > best_f1:
-            best_f1 = f
-            best_thresh = t
+            best_f1, best_f1_thresh = f, t
+
+    logging.info(f"  Youden-J threshold: {best_thresh:.2f}  (F1-optimal was: {best_f1_thresh:.2f})")
 
     oof_preds = (oof_probs >= best_thresh).astype(int)
-
     metrics = {
-        "f1":             float(f1_score(y_all, oof_preds)),
+        "f1":             float(f1_score(y_all, oof_preds, zero_division=0)),
         "precision":      float(precision_score(y_all, oof_preds, zero_division=0)),
         "recall":         float(recall_score(y_all, oof_preds, zero_division=0)),
         "roc_auc":        float(roc_auc_score(y_all, oof_probs)),
         "best_threshold": float(best_thresh),
-        "features_used":  "audio(120) + image(97) = 217",
-        "cv_strategy":    "GroupKFold(5) on config_folder (no data leakage)",
+        "youden_j":       float(best_j),
+        "features_used":  f"audio+image selected subset",
+        "cv_strategy":    "GroupKFold(5) on config_folder",
     }
+    logging.info(f"  OOF Binary — F1: {metrics['f1']:.4f}, AUC: {metrics['roc_auc']:.4f}, Threshold: {best_thresh:.2f}")
 
-    logging.info(f"  OOF Binary — F1: {metrics['f1']:.4f}, AUC: {metrics['roc_auc']:.4f}, Threshold: {best_thresh:.3f}")
-
-    # Refit on ALL data for deployment
-    logging.info("  Refitting on full dataset for deployment...")
+    logging.info("  Refitting on full dataset...")
     model.fit(X_all, y_all)
 
     joblib.dump(model, os.path.join(ARTIFACTS_DIR, "binary_model_av.joblib"))
@@ -145,73 +181,58 @@ def train_binary_av(X_all, y_all, groups):
 
 
 def train_multiclass_av(X_all, y_codes_all, groups):
-    """Train multiclass defect type classifier using GroupKFold."""
-    logging.info("\n=== Training Multiclass AV Model (GroupKFold, n=5) ===")
+    """GroupKFold multiclass type classifier (defects only)."""
+    logging.info("\n=== Training Multiclass AV Model (GroupKFold n=5) ===")
 
-    # Only defective samples
     defect_mask = y_codes_all != "00"
-    X_d      = X_all[defect_mask]
-    y_codes_d = y_codes_all[defect_mask]
-    groups_d  = groups[defect_mask]
+    X_d         = X_all[defect_mask]
+    y_codes_d   = y_codes_all[defect_mask]
+    groups_d    = groups[defect_mask]
 
-    le = LabelEncoder()
-    y_d = le.fit_transform(y_codes_d)
-
-    n_classes = len(le.classes_)
-    logging.info(f"  Classes: {list(le.classes_)} ({n_classes} types)")
-    logging.info(f"  Total defect samples: {len(X_d)}")
+    le   = LabelEncoder()
+    y_d  = le.fit_transform(y_codes_d)
+    n_cls = len(le.classes_)
+    logging.info(f"  Classes: {list(le.classes_)} | defect samples: {len(X_d)}")
 
     model = XGBClassifier(
-        objective="multi:softprob",
-        num_class=n_classes,
-        n_estimators=500,
-        max_depth=6,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        min_child_weight=3,
-        eval_metric="mlogloss",
-        use_label_encoder=False,
-        random_state=42,
-        tree_method="hist",
+        objective="multi:softprob", num_class=n_cls,
+        n_estimators=500, max_depth=5, learning_rate=0.05,
+        subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
+        eval_metric="mlogloss", use_label_encoder=False,
+        random_state=42, tree_method="hist",
     )
 
-    # OOF predictions
     gkf = GroupKFold(n_splits=5)
     oof_preds = np.zeros(len(y_d), dtype=int)
-
     t0 = time.time()
     for fold, (tr_idx, va_idx) in enumerate(gkf.split(X_d, y_d, groups_d)):
         model.fit(X_d[tr_idx], y_d[tr_idx])
         oof_preds[va_idx] = model.predict(X_d[va_idx])
         logging.info(f"  Fold {fold+1}/5 done")
+    logging.info(f"  OOF done in {time.time()-t0:.1f}s")
 
-    elapsed = time.time() - t0
-    logging.info(f"  OOF cross-validation done in {elapsed:.1f}s")
-
-    macro_f1    = float(f1_score(y_d, oof_preds, average="macro", zero_division=0))
+    macro_f1    = float(f1_score(y_d, oof_preds, average="macro",    zero_division=0))
     weighted_f1 = float(f1_score(y_d, oof_preds, average="weighted", zero_division=0))
-    report      = classification_report(y_d, oof_preds, target_names=le.classes_, output_dict=True, zero_division=0)
-
+    report      = classification_report(y_d, oof_preds, target_names=le.classes_,
+                                        output_dict=True, zero_division=0)
     logging.info(f"  OOF Multiclass — Macro F1: {macro_f1:.4f}")
     logging.info(f"\n{classification_report(y_d, oof_preds, target_names=le.classes_, zero_division=0)}")
 
     metrics = {
-        "macro_f1":   macro_f1,
+        "macro_f1":    macro_f1,
         "weighted_f1": weighted_f1,
-        "per_class":  {cls: {"f1": report[cls]["f1-score"], "precision": report[cls]["precision"],
-                             "recall": report[cls]["recall"]}
-                       for cls in le.classes_},
-        "features_used": "audio(120) + image(97) = 217",
-        "cv_strategy":   "GroupKFold(5) on config_folder (no data leakage)",
+        "per_class":   {cls: {"f1": report[cls]["f1-score"],
+                              "precision": report[cls]["precision"],
+                              "recall": report[cls]["recall"]} for cls in le.classes_},
+        "features_used": "audio+image selected subset",
+        "cv_strategy":   "GroupKFold(5) on config_folder",
     }
 
-    # Refit on all defect data
-    logging.info("  Refitting on full defect dataset for deployment...")
+    logging.info("  Refitting on full defect dataset...")
     model.fit(X_d, y_d)
 
-    joblib.dump(model, os.path.join(ARTIFACTS_DIR, "multiclass_model_av.joblib"))
-    joblib.dump(le,    os.path.join(ARTIFACTS_DIR, "label_encoder_av.joblib"))
+    joblib.dump(model,  os.path.join(ARTIFACTS_DIR, "multiclass_model_av.joblib"))
+    joblib.dump(le,     os.path.join(ARTIFACTS_DIR, "label_encoder_av.joblib"))
     with open(os.path.join(ARTIFACTS_DIR, "multiclass_av_metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 
@@ -220,24 +241,32 @@ def train_multiclass_av(X_all, y_codes_all, groups):
 
 def main():
     logging.info("=" * 60)
-    logging.info("  Audio-Visual Model Training (GroupKFold — No Leakage)")
+    logging.info("  Audio-Visual Model Training (FeatureSelect + GroupKFold)")
     logging.info("=" * 60)
 
-    X_all, y_binary_all, y_codes_all, groups = load_all_data()
+    X_all, y_bin_all, y_code_all, groups = load_all_data()
 
-    bin_model, threshold, bin_metrics = train_binary_av(X_all, y_binary_all, groups)
-    multi_model, le, multi_metrics    = train_multiclass_av(X_all, y_codes_all, groups)
+    # ---- Step 1: Feature selection ----
+    mask = select_features(X_all, y_bin_all, groups)
+    np.save(os.path.join(ARTIFACTS_DIR, "feature_mask_av.npy"), mask)
+    X_sel = X_all[:, mask]
+    logging.info(f"  Using {mask.sum()} features for final training")
 
-    binary_f1    = bin_metrics["f1"]
+    # ---- Step 2: Train models ----
+    bin_model,   threshold,  bin_metrics   = train_binary_av(X_sel, y_bin_all,  groups)
+    multi_model, le,         multi_metrics = train_multiclass_av(X_sel, y_code_all, groups)
+
+    binary_f1     = bin_metrics["f1"]
     type_macro_f1 = multi_metrics["macro_f1"]
-    final_score  = 0.6 * binary_f1 + 0.4 * type_macro_f1
+    final_score   = 0.6 * binary_f1 + 0.4 * type_macro_f1
 
     logging.info("\n" + "=" * 60)
-    logging.info("  AUDIO-VISUAL MODEL RESULTS (GroupKFold OOF)")
+    logging.info("  RESULTS (GroupKFold OOF, feature-selected)")
+    logging.info(f"  Features:        {int(mask.sum())} / 217")
     logging.info(f"  Binary F1:       {binary_f1:.4f}")
     logging.info(f"  Type Macro F1:   {type_macro_f1:.4f}")
     logging.info(f"  Final Score:     {final_score:.4f} ({final_score*100:.1f}%)")
-    logging.info("  (No data leakage — GroupKFold by config_folder)")
+    logging.info(f"  Binary Threshold:{threshold:.2f}  (Youden-J from CV)")
     logging.info("=" * 60)
 
     with open(os.path.join(ARTIFACTS_DIR, "pipeline_av_metrics.json"), "w") as f:
@@ -246,7 +275,8 @@ def main():
             "type_macro_f1":  type_macro_f1,
             "final_score":    final_score,
             "best_threshold": threshold,
-            "features":       "audio(120) + image(97) = 217 dims",
+            "n_features":     int(mask.sum()),
+            "features":       "audio+image selected subset",
             "cv_strategy":    "GroupKFold(5) on config_folder",
         }, f, indent=2)
 

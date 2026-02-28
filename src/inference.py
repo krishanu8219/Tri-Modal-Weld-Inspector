@@ -24,6 +24,7 @@ class DefectClassifierPipeline:
         self.multiclass_model_av = None
         self.le_av = None
         self.has_av_models = False
+        self.feature_mask_av = None   # boolean mask for selected features
         
         self._load_models()
         
@@ -72,6 +73,12 @@ class DefectClassifierPipeline:
                 except Exception as e:
                     logging.warning(f"Could not load AV threshold from {av_metrics_path}: {e}")
             
+            # Load feature selection mask (saved by train_audiovisual.py)
+            mask_path = os.path.join(self.artifacts_dir, "feature_mask_av.npy")
+            if os.path.exists(mask_path):
+                self.feature_mask_av = np.load(mask_path)
+                logging.info(f"Feature mask loaded: {int(self.feature_mask_av.sum())}/217 features selected")
+            
             self.has_av_models = True
             logging.info("Audio-Visual fallback models loaded (for no-CSV inference)")
                 
@@ -92,12 +99,17 @@ class DefectClassifierPipeline:
         if not csv_exists and self.has_av_models:
             features_av = np.concatenate([audio_f, image_f])
             
+            # Pad/truncate to 217 dims first
             expected_dim = 217  # 120 audio + 97 image
             if len(features_av) != expected_dim:
                 if len(features_av) < expected_dim:
                     features_av = np.concatenate([features_av, np.zeros(expected_dim - len(features_av))])
                 else:
                     features_av = features_av[:expected_dim]
+            
+            # Apply feature selection mask if available
+            if self.feature_mask_av is not None:
+                features_av = features_av[self.feature_mask_av]
             
             features_av = features_av.reshape(1, -1)
             

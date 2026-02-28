@@ -1,9 +1,10 @@
 {
-  "f1": 0.9072886297376094,
-  "precision": 0.8692737430167597,
-  "recall": 0.948780487804878,
-  "roc_auc": 0.946109572586834,
-  "best_threshold": 0.3199999999999999,
-  "features_used": "audio(120) + image(97) = 217",
-  "cv_strategy": "GroupKFold(5) on config_folder (no data leakage)"
+  "f1": 0.9091981132075472,
+  "precision": 0.8801369863013698,
+  "recall": 0.9402439024390243,
+  "roc_auc": 0.9472640218878248,
+  "best_threshold": 0.4100000000000001,
+  "youden_j": 0.7966050515498315,
+  "features_used": "audio+image selected subset",
+  "cv_strategy": "GroupKFold(5) on config_folder"
 }

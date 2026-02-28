@@ -609,74 +609,269 @@ export default function Dashboard() {
       {/* ===== PAGE: EVALUATION REPORT ===== */}
       {activePage === 'evaluation' && (
         <div className="animate-fade-in">
-          {/* Final Score Hero */}
-          <div className={styles.statsGrid} style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '1.5rem' }}>
-            <div className={`${styles.statCard} glass`} style={{ background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)', borderColor: 'var(--accent-primary)' }}>
-              <div className={styles.statIconWrapper} style={{ backgroundColor: 'rgba(59, 130, 246, 0.2)', color: 'var(--accent-primary)' }}>
-                <TrendingUp size={24} />
+          {/* Top-level binary stats row */}
+          <div className={styles.statsGrid} style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: '1.5rem' }}>
+            {[
+              { label: 'Binary F1', value: metrics?.binary?.f1, color: '#3b82f6' },
+              { label: 'Precision', value: metrics?.binary?.precision, color: '#10b981' },
+              { label: 'Recall', value: metrics?.binary?.recall, color: '#f59e0b' },
+              { label: 'Accuracy', value: metrics?.binary?.accuracy, color: '#8b5cf6' },
+            ].map((m, i) => (
+              <div key={i} className={`${styles.statCard} glass`}>
+                <div className={styles.statContent} style={{ textAlign: 'center' }}>
+                  <p className={styles.statLabel}>{m.label}</p>
+                  <h3 className={styles.statValue} style={{ color: m.color }}>{m.value != null ? m.value.toFixed(4) : 'N/A'}</h3>
+                </div>
               </div>
-              <div className={styles.statContent}>
-                <p className={styles.statLabel}>🏆 Final Score</p>
-                <h3 className={styles.statValue}>{metrics?.pipeline?.final_score?.toFixed(4) || 'N/A'}</h3>
-                <p className={styles.statTrend} style={{ color: 'var(--accent-primary)' }}>0.6×BinF1 + 0.4×TypeMacroF1</p>
+            ))}
+          </div>
+
+          {/* ROC AUC + Binary Confusion Matrix side by side */}
+          <div className={styles.chartsGrid} style={{ marginBottom: '1.5rem' }}>
+            {/* ROC Curve Info */}
+            <div className={`${styles.chartCard} glass`}>
+              <div className={styles.chartHeader}>
+                <h3>ROC Curve (AUC: {metrics?.binary?.roc_auc?.toFixed(4) || 'N/A'})</h3>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', padding: '1rem 0' }}>
+                <div style={{ textAlign: 'center' }}>
+                  <p style={{ fontSize: '3.5rem', fontWeight: 800, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', WebkitBackgroundClip: 'text', color: 'transparent' }}>
+                    {metrics?.binary?.roc_auc?.toFixed(4) || 'N/A'}
+                  </p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Area Under ROC Curve</p>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', width: '100%' }}>
+                  <div style={{ padding: '1rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Threshold</p>
+                    <p style={{ fontSize: '1.25rem', fontWeight: 700 }}>{metrics?.binary?.best_threshold?.toFixed(2) || 'N/A'}</p>
+                  </div>
+                  <div style={{ padding: '1rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Test Samples</p>
+                    <p style={{ fontSize: '1.25rem', fontWeight: 700 }}>{metrics?.pipeline?.total_test_samples || 115}</p>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className={`${styles.statCard} glass`}>
-              <div className={styles.statIconWrapper} style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)' }}>
-                <CheckCircle size={24} />
+            {/* Binary Confusion Matrix */}
+            <div className={`${styles.chartCard} glass`}>
+              <div className={styles.chartHeader}>
+                <h3>Binary Confusion Matrix</h3>
               </div>
-              <div className={styles.statContent}>
-                <p className={styles.statLabel}>Binary F1</p>
-                <h3 className={styles.statValue}>{metrics?.pipeline?.binary_f1?.toFixed(4) || metrics?.binary?.f1?.toFixed(4) || 'N/A'}</h3>
-                <p className={styles.statTrend} style={{ color: 'var(--success)' }}>Defect detection</p>
+              {metrics?.binary?.confusion_matrix && (() => {
+                const cm = metrics.binary.confusion_matrix;
+                return (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ padding: '0.75rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500 }}></th>
+                        <th style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500 }}>Pred: No Defect</th>
+                        <th style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500 }}>Pred: Defect</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style={{ padding: '0.75rem', fontWeight: 600 }}>True: No Defect</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center', backgroundColor: 'rgba(16,185,129,0.15)', fontWeight: 700, fontSize: '1.5rem', borderRadius: 'var(--radius-sm)' }}>{cm.tn}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center', backgroundColor: 'rgba(239,68,68,0.1)', fontWeight: 700, fontSize: '1.5rem', borderRadius: 'var(--radius-sm)' }}>{cm.fp}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ padding: '0.75rem', fontWeight: 600 }}>True: Defect</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center', backgroundColor: 'rgba(239,68,68,0.1)', fontWeight: 700, fontSize: '1.5rem', borderRadius: 'var(--radius-sm)' }}>{cm.fn}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center', backgroundColor: 'rgba(16,185,129,0.15)', fontWeight: 700, fontSize: '1.5rem', borderRadius: 'var(--radius-sm)' }}>{cm.tp}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Per-Class F1 Score Bar Chart */}
+          {metrics?.multiclass?.per_class && (
+            <div className={`${styles.chartCard} glass`} style={{ marginBottom: '1.5rem' }}>
+              <div className={styles.chartHeader}>
+                <h3>Per-Class F1 Score</h3>
+              </div>
+              <div style={{ padding: '0.5rem 0' }}>
+                {(() => {
+                  const classColors: Record<string, string> = {
+                    '11': '#3b82f6', '00': '#10b981', '01': '#f97316', '02': '#ef4444',
+                    '06': '#8b5cf6', '07': '#ec4899', '08': '#06b6d4'
+                  };
+                  const classNames: Record<string, string> = {
+                    '00': 'good weld', '01': 'excessive penetration', '02': 'burn through',
+                    '06': 'overlap', '07': 'lack of fusion', '08': 'excessive convexity', '11': 'crater cracks'
+                  };
+                  const order = ['11', '00', '01', '02', '06', '07', '08'];
+                  return order.map((cls) => {
+                    const data = metrics.multiclass.per_class[cls];
+                    if (!data) return null;
+                    return (
+                      <div key={cls} style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
+                        <span style={{ minWidth: '140px', textAlign: 'right', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{classNames[cls] || cls}</span>
+                        <div style={{ flex: 1, backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', height: '28px', position: 'relative', overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${(data.f1 * 100)}%`,
+                            height: '100%',
+                            backgroundColor: classColors[cls] || '#6b7280',
+                            borderRadius: 'var(--radius-sm)',
+                            transition: 'width 0.5s ease'
+                          }} />
+                        </div>
+                        <span style={{ minWidth: '50px', fontWeight: 700, fontSize: '0.85rem' }}>{data.f1.toFixed(4)}</span>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
+          )}
 
-            <div className={`${styles.statCard} glass`}>
-              <div className={styles.statIconWrapper} style={{ backgroundColor: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b' }}>
-                <BarChart3 size={24} />
+          {/* Multi-Class Confusion Matrix */}
+          {metrics?.multiclass?.confusion_matrix && (
+            <div className={`${styles.chartCard} glass`} style={{ marginBottom: '1.5rem' }}>
+              <div className={styles.chartHeader}>
+                <h3>Multi-Class Confusion Matrix</h3>
               </div>
-              <div className={styles.statContent}>
-                <p className={styles.statLabel}>Type Macro-F1</p>
-                <h3 className={styles.statValue}>{metrics?.pipeline?.type_macro_f1?.toFixed(4) || 'N/A'}</h3>
-                <p className={styles.statTrend} style={{ color: '#f59e0b' }}>Defect classification</p>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 500, minWidth: '120px' }}></th>
+                      {metrics.multiclass.confusion_matrix.labels.map((lbl: string, i: number) => (
+                        <th key={i} style={{ padding: '0.5rem', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 500, fontSize: '0.7rem', minWidth: '70px' }}>
+                          {lbl}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {metrics.multiclass.confusion_matrix.matrix.map((row: number[], ri: number) => {
+                      const rowMax = Math.max(...row);
+                      return (
+                        <tr key={ri}>
+                          <td style={{ padding: '0.5rem', fontWeight: 600, fontSize: '0.75rem' }}>
+                            {metrics.multiclass.confusion_matrix.labels[ri]}
+                          </td>
+                          {row.map((val: number, ci: number) => {
+                            const isDiag = ri === ci;
+                            const intensity = rowMax > 0 ? val / rowMax : 0;
+                            return (
+                              <td key={ci} style={{
+                                padding: '0.5rem',
+                                textAlign: 'center',
+                                fontWeight: val > 0 ? 700 : 400,
+                                fontSize: '0.9rem',
+                                backgroundColor: isDiag
+                                  ? `rgba(16,185,129,${0.1 + intensity * 0.3})`
+                                  : val > 0
+                                    ? `rgba(239,68,68,${0.05 + intensity * 0.2})`
+                                    : 'transparent',
+                                borderRadius: 'var(--radius-sm)',
+                                color: val === 0 ? 'var(--text-muted)' : 'var(--text-primary)'
+                              }}>
+                                {val}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Per-Class Metrics Table */}
+          {metrics?.multiclass?.per_class && (
+            <div className={`${styles.chartCard} glass`} style={{ marginBottom: '1.5rem' }}>
+              <div className={styles.chartHeader}>
+                <h3>Per-Class Metrics</h3>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--border-color)' }}>
+                      <th style={{ padding: '0.75rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 600 }}>Class</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 600 }}>Precision</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 600 }}>Recall</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 600 }}>F1</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--text-muted)', fontWeight: 600 }}>Support</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const classNames: Record<string, string> = {
+                        '00': 'Good Weld', '01': 'Excessive Penetration', '02': 'Burn Through',
+                        '06': 'Overlap', '07': 'Lack of Fusion', '08': 'Excessive Convexity', '11': 'Crater Cracks'
+                      };
+                      const order = ['11', '00', '01', '02', '06', '07', '08'];
+                      return order.map((cls) => {
+                        const d = metrics.multiclass.per_class[cls];
+                        if (!d) return null;
+                        return (
+                          <tr key={cls} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                            <td style={{ padding: '0.75rem', fontWeight: 600 }}>{classNames[cls] || cls}</td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right' }}>{d.precision.toFixed(4)}</td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right' }}>{d.recall.toFixed(4)}</td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 700, color: d.f1 >= 0.8 ? 'var(--success)' : d.f1 >= 0.5 ? '#f59e0b' : 'var(--danger)' }}>{d.f1.toFixed(4)}</td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right' }}>{d.support}</td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Pipeline Score Summary */}
+          <div className={`${styles.chartCard} glass`} style={{ marginBottom: '1.5rem' }}>
+            <div className={styles.chartHeader}>
+              <h3>🏆 Pipeline Score Summary</h3>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', padding: '1rem 0', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <div style={{ textAlign: 'center', flex: 1, minWidth: '200px' }}>
+                <p style={{ fontSize: '3rem', fontWeight: 800, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', WebkitBackgroundClip: 'text', color: 'transparent' }}>{metrics?.pipeline?.final_score?.toFixed(4) || 'N/A'}</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>Final Score = 0.6 × BinF1 + 0.4 × TypeMacroF1</p>
+              </div>
+              <div style={{ display: 'flex', gap: '1.5rem' }}>
+                <div style={{ textAlign: 'center', padding: '1rem 1.5rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#3b82f6' }}>{metrics?.pipeline?.binary_f1?.toFixed(4) || 'N/A'}</p>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Binary F1 (×0.6)</p>
+                </div>
+                <div style={{ textAlign: 'center', padding: '1rem 1.5rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#f59e0b' }}>{metrics?.pipeline?.type_macro_f1?.toFixed(4) || 'N/A'}</p>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Type Macro F1 (×0.4)</p>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Detailed Metrics Grid */}
-          <div className={styles.chartsGrid}>
-            {/* Phase 2 Binary Metrics */}
+          {/* Model Configuration Info */}
+          <div className={styles.chartsGrid} style={{ marginBottom: '1.5rem' }}>
             <div className={`${styles.chartCard} glass`}>
               <div className={styles.chartHeader}>
-                <h3>Phase 2: Binary Classification</h3>
+                <h3>🎯 Pipeline Configuration</h3>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-                {[
-                  { label: 'Precision', value: metrics?.binary?.precision, color: '#3b82f6' },
-                  { label: 'Recall', value: metrics?.binary?.recall, color: '#10b981' },
-                  { label: 'ROC-AUC', value: metrics?.binary?.roc_auc, color: '#8b5cf6' },
-                  { label: 'PR-AUC', value: metrics?.binary?.pr_auc, color: '#f59e0b' },
-                  { label: 'ECE (Calibration)', value: metrics?.binary?.ece, color: '#ec4899' },
-                  { label: 'Threshold', value: metrics?.pipeline?.best_pipeline_threshold || metrics?.binary?.best_threshold, color: '#6366f1' },
-                ].map((m, i) => (
-                  <div key={i} style={{ padding: '1rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', borderLeft: `3px solid ${m.color}` }}>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>{m.label}</p>
-                    <p style={{ fontSize: '1.25rem', fontWeight: 700 }}>{m.value != null ? m.value.toFixed(4) : 'N/A'}</p>
-                  </div>
-                ))}
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8, padding: '0.5rem 0' }}>
+                <p>• <strong>Architecture:</strong> Chained XGBoost (Binary → Multi-class)</p>
+                <p>• <strong>Features:</strong> Sensor + Audio + Image (Late Fusion)</p>
+                <p>• <strong>Threshold:</strong> {metrics?.pipeline?.best_pipeline_threshold?.toFixed(3) || 'N/A'} (optimized on FinalScore)</p>
+                <p>• <strong>Calibration:</strong> CalibratedClassifierCV (Sigmoid)</p>
+                <p>• <strong>Test Samples:</strong> {metrics?.pipeline?.total_test_samples || 115}</p>
               </div>
             </div>
-
-            {/* Phase 3 Multiclass Metrics */}
             <div className={`${styles.chartCard} glass`}>
               <div className={styles.chartHeader}>
-                <h3>Phase 3: Multi-Class Metrics</h3>
+                <h3>📊 Aggregate Multi-Class Metrics</h3>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                 {[
-                  { label: 'Pipeline Type F1', value: metrics?.pipeline?.type_macro_f1, color: '#10b981' },
+                  { label: 'Macro F1', value: metrics?.multiclass?.macro_f1, color: '#10b981' },
                   { label: 'Weighted F1', value: metrics?.multiclass?.weighted_f1, color: '#3b82f6' },
                   { label: 'Macro Precision', value: metrics?.multiclass?.macro_precision, color: '#f59e0b' },
                   { label: 'Macro Recall', value: metrics?.multiclass?.macro_recall, color: '#8b5cf6' },
@@ -687,136 +882,101 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
-
-              {/* Model Info */}
-              <div style={{ marginTop: '1.5rem', padding: '1rem', backgroundColor: 'rgba(59, 130, 246, 0.05)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
-                <p style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--accent-primary)' }}>🎯 Pipeline Configuration</p>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-                  <p>• <strong>Architecture:</strong> Chained XGBoost (Binary → Multi-class)</p>
-                  <p>• <strong>Features:</strong> Sensor + Audio + Image (Late Fusion)</p>
-                  <p>• <strong>Threshold:</strong> {metrics?.pipeline?.best_pipeline_threshold?.toFixed(3) || 'N/A'} (optimized on FinalScore)</p>
-                  <p>• <strong>Calibration:</strong> CalibratedClassifierCV (Sigmoid)</p>
-                </div>
-              </div>
             </div>
           </div>
 
-          {/* Confidence Quality */}
-          <div className={`${styles.chartCard} glass`} style={{ marginTop: '1.5rem' }}>
-            <div className={styles.chartHeader}>
-              <h3>📊 Confidence Quality Assessment</h3>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-              <div style={{ padding: '1.5rem', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>ECE (Expected Calibration Error)</p>
-                <p style={{ fontSize: '2rem', fontWeight: 700, color: (metrics?.binary?.ece || 0) < 0.1 ? 'var(--success)' : '#f59e0b' }}>{metrics?.binary?.ece?.toFixed(4) || 'N/A'}</p>
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>Lower is better (≤ 0.05 = excellent)</p>
+          {/* Overfitting / Underfitting Report */}
+          {diagnostics && (
+            <div className={`${styles.chartCard} glass`} style={{ marginBottom: '1.5rem' }}>
+              <div className={styles.chartHeader}>
+                <h3>📈 Overfitting / Underfitting Report</h3>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Train vs Validation</span>
               </div>
-              <div style={{ padding: '1.5rem', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>Confidence Definition</p>
-                <p style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Calibrated Probability</p>
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>CalibratedClassifierCV (sigmoid)</p>
-              </div>
-              <div style={{ padding: '1.5rem', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>Decision Rule</p>
-                <p style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Fixed Threshold</p>
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>τ = {metrics?.pipeline?.best_pipeline_threshold?.toFixed(3) || '0.500'} (frozen at test-time)</p>
-              </div>
-
-              {/* Overfitting / Underfitting Report */}
-              {diagnostics && (
-                <div className={`${styles.chartCard} glass`} style={{ marginTop: '1.5rem' }}>
-                  <div className={styles.chartHeader}>
-                    <h3>📈 Overfitting / Underfitting Report</h3>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Train vs Validation</span>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-                    {/* Binary Model */}
-                    {diagnostics.binary && (
-                      <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                          <h4 style={{ margin: 0 }}>Binary Model</h4>
-                          <span style={{ padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: diagnostics.binary.status === 'good' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: diagnostics.binary.status === 'good' ? 'var(--success)' : '#f59e0b' }}>
-                            {diagnostics.binary.verdict}
-                          </span>
-                        </div>
-                        <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
-                          <thead>
-                            <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                              <th style={{ textAlign: 'left', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Metric</th>
-                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Train</th>
-                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Val</th>
-                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Gap</th>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                {/* Binary Model */}
+                {diagnostics.binary && (
+                  <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                      <h4 style={{ margin: 0 }}>Binary Model</h4>
+                      <span style={{ padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: diagnostics.binary.status === 'good' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: diagnostics.binary.status === 'good' ? 'var(--success)' : '#f59e0b' }}>
+                        {diagnostics.binary.verdict}
+                      </span>
+                    </div>
+                    <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <th style={{ textAlign: 'left', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Metric</th>
+                          <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Train</th>
+                          <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Val</th>
+                          <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Gap</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          { name: 'Log Loss', train: diagnostics.binary.train_log_loss, val: diagnostics.binary.val_log_loss },
+                          { name: 'F1 Score', train: diagnostics.binary.train_f1, val: diagnostics.binary.val_f1 },
+                          { name: 'Accuracy', train: diagnostics.binary.train_accuracy, val: diagnostics.binary.val_accuracy },
+                        ].map((row, i) => {
+                          const gap = row.train - row.val;
+                          return (
+                            <tr key={i} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                              <td style={{ padding: '0.5rem 0', fontWeight: 500 }}>{row.name}</td>
+                              <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.train.toFixed(4)}</td>
+                              <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.val.toFixed(4)}</td>
+                              <td style={{ textAlign: 'right', padding: '0.5rem 0', color: Math.abs(gap) > 0.05 ? '#f59e0b' : 'var(--success)', fontWeight: 600 }}>
+                                {gap > 0 ? '+' : ''}{gap.toFixed(4)}
+                              </td>
                             </tr>
-                          </thead>
-                          <tbody>
-                            {[
-                              { name: 'Log Loss', train: diagnostics.binary.train_log_loss, val: diagnostics.binary.val_log_loss },
-                              { name: 'F1 Score', train: diagnostics.binary.train_f1, val: diagnostics.binary.val_f1 },
-                              { name: 'Accuracy', train: diagnostics.binary.train_accuracy, val: diagnostics.binary.val_accuracy },
-                            ].map((row, i) => {
-                              const gap = row.train - row.val;
-                              return (
-                                <tr key={i} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                  <td style={{ padding: '0.5rem 0', fontWeight: 500 }}>{row.name}</td>
-                                  <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.train.toFixed(4)}</td>
-                                  <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.val.toFixed(4)}</td>
-                                  <td style={{ textAlign: 'right', padding: '0.5rem 0', color: Math.abs(gap) > 0.05 ? '#f59e0b' : 'var(--success)', fontWeight: 600 }}>
-                                    {gap > 0 ? '+' : ''}{gap.toFixed(4)}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-
-                    {/* Multiclass Model */}
-                    {diagnostics.multiclass && (
-                      <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                          <h4 style={{ margin: 0 }}>Multiclass Model</h4>
-                          <span style={{ padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: diagnostics.multiclass.status === 'good' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: diagnostics.multiclass.status === 'good' ? 'var(--success)' : '#f59e0b' }}>
-                            {diagnostics.multiclass.verdict}
-                          </span>
-                        </div>
-                        <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
-                          <thead>
-                            <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                              <th style={{ textAlign: 'left', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Metric</th>
-                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Train</th>
-                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Val</th>
-                              <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Gap</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {[
-                              { name: 'Log Loss', train: diagnostics.multiclass.train_log_loss, val: diagnostics.multiclass.val_log_loss },
-                              { name: 'Macro F1', train: diagnostics.multiclass.train_f1, val: diagnostics.multiclass.val_f1 },
-                              { name: 'Accuracy', train: diagnostics.multiclass.train_accuracy, val: diagnostics.multiclass.val_accuracy },
-                            ].map((row, i) => {
-                              const gap = row.train - row.val;
-                              return (
-                                <tr key={i} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                  <td style={{ padding: '0.5rem 0', fontWeight: 500 }}>{row.name}</td>
-                                  <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.train.toFixed(4)}</td>
-                                  <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.val.toFixed(4)}</td>
-                                  <td style={{ textAlign: 'right', padding: '0.5rem 0', color: Math.abs(gap) > 0.05 ? '#f59e0b' : 'var(--success)', fontWeight: 600 }}>
-                                    {gap > 0 ? '+' : ''}{gap.toFixed(4)}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-              )}
+                )}
+
+                {/* Multiclass Model */}
+                {diagnostics.multiclass && (
+                  <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                      <h4 style={{ margin: 0 }}>Multiclass Model</h4>
+                      <span style={{ padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: diagnostics.multiclass.status === 'good' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: diagnostics.multiclass.status === 'good' ? 'var(--success)' : '#f59e0b' }}>
+                        {diagnostics.multiclass.verdict}
+                      </span>
+                    </div>
+                    <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <th style={{ textAlign: 'left', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Metric</th>
+                          <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Train</th>
+                          <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Val</th>
+                          <th style={{ textAlign: 'right', padding: '0.5rem 0', color: 'var(--text-muted)', fontWeight: 500 }}>Gap</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          { name: 'Log Loss', train: diagnostics.multiclass.train_log_loss, val: diagnostics.multiclass.val_log_loss },
+                          { name: 'Macro F1', train: diagnostics.multiclass.train_f1, val: diagnostics.multiclass.val_f1 },
+                          { name: 'Accuracy', train: diagnostics.multiclass.train_accuracy, val: diagnostics.multiclass.val_accuracy },
+                        ].map((row, i) => {
+                          const gap = row.train - row.val;
+                          return (
+                            <tr key={i} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                              <td style={{ padding: '0.5rem 0', fontWeight: 500 }}>{row.name}</td>
+                              <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.train.toFixed(4)}</td>
+                              <td style={{ textAlign: 'right', padding: '0.5rem 0' }}>{row.val.toFixed(4)}</td>
+                              <td style={{ textAlign: 'right', padding: '0.5rem 0', color: Math.abs(gap) > 0.05 ? '#f59e0b' : 'var(--success)', fontWeight: 600 }}>
+                                {gap > 0 ? '+' : ''}{gap.toFixed(4)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 

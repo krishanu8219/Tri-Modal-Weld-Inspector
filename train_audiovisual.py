@@ -38,8 +38,13 @@ ARTIFACTS_DIR = "artifacts"
 CACHE_PATH    = os.path.join(ARTIFACTS_DIR, "feature_cache.npz")
 
 # ------------------------------------------------------------------ #
+# Physics-based feature dims (must match audio_features.py /          #
+# image_features.py)                                                  #
+N_AUDIO = 136    # AUDIO_FEAT_DIM in audio_features.py
+N_IMAGE = 128    # IMAGE_FEAT_DIM in image_features.py
+N_TOTAL = N_AUDIO + N_IMAGE   # 264
+# ------------------------------------------------------------------ #
 # How many top features to keep (by cumulative importance).           #
-# E.g. 0.80 keeps the smallest set that covers 80% of total signal.  #
 CUMULATIVE_IMPORTANCE_THRESHOLD = 0.80
 # ------------------------------------------------------------------ #
 

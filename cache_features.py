@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Fast feature caching with multiprocessing.
-Only extracts audio(120) + image(97) = 217 features (skips sensor — not needed for AV model).
+Extracts physics-based audio(136) + image(128) = 264 features (skips sensor — not needed for AV model).
 Uses all CPU cores for parallel extraction.
 
 Output: artifacts/feature_cache.npz
@@ -24,15 +24,15 @@ def extract_one(args):
     """Extract features for a single run (worker function)."""
     idx, flac_path, run_dir, label_code = args
     try:
-        from src.audio_features import extract_audio_features
-        from src.image_features import extract_image_features
+        from src.audio_features import extract_audio_features, AUDIO_FEAT_DIM
+        from src.image_features import extract_image_features, IMAGE_FEAT_DIM
         
         audio_f = extract_audio_features(flac_path)
         image_f = extract_image_features(run_dir)
         
         return idx, audio_f, image_f, None
     except Exception as e:
-        return idx, np.zeros(120), np.zeros(97), str(e)
+        return idx, np.zeros(136), np.zeros(128), str(e)
 
 
 def cache_split(split_csv, split_name, n_workers=None):
@@ -53,8 +53,8 @@ def cache_split(split_csv, split_name, n_workers=None):
     
     # Run in parallel
     t0 = time.time()
-    audio_arr = np.zeros((n, 120))
-    image_arr = np.zeros((n, 97))
+    audio_arr = np.zeros((n, 136))
+    image_arr = np.zeros((n, 128))
     errors = 0
     
     with Pool(n_workers) as pool:

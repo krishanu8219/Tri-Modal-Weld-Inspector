@@ -106,8 +106,8 @@ class DefectClassifierPipeline:
         if not csv_exists and self.has_av_models:
             features_av = np.concatenate([audio_f, image_f])
             
-            # Pad/truncate to 217 dims first
-            expected_dim = 217  # 120 audio + 97 image
+            # Pad/truncate to 264 dims first (physics-based features)
+            expected_dim = 264  # 136 audio + 128 image
             if len(features_av) != expected_dim:
                 if len(features_av) < expected_dim:
                     features_av = np.concatenate([features_av, np.zeros(expected_dim - len(features_av))])

@@ -48,7 +48,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/runs`).then(r => r.json()).catch(() => ({ runs: [] })),
+      fetch(`${API}/test-runs`).then(r => r.json()).catch(() => ({ runs: [] })),
       fetch(`${API}/stats`).then(r => r.json()).catch(() => null),
       fetch(`${API}/metrics`).then(r => r.json()).catch(() => null),
       fetch(`${API}/diagnostics`).then(r => r.json()).catch(() => null),
@@ -62,28 +62,23 @@ export default function Dashboard() {
   }, []);
 
   const handleSelectRun = (run_id: string) => {
-    setSelectedRun(run_id);
+    // run_id may be sample_id from test data — extract it
+    const sampleId = run_id.includes('sample_') ? run_id : `sample_${run_id}`;
+    setSelectedRun(sampleId);
     setInferLoading(true);
     setInferData(null);
     setAudioWaveform(null);
     setExplanationData(null);
-    fetch(`${API}/infer/${run_id}`)
+    fetch(`${API}/infer-test/${run_id}`)
       .then(res => res.json())
       .then(data => {
         setInferData(data);
         setInferLoading(false);
         // Fetch audio waveform if available
         if (data.audio) {
-          fetch(`${API}/audio-waveform/${run_id}`)
+          fetch(`${API}/audio-waveform-test/${run_id}`)
             .then(r => r.json())
             .then(wf => setAudioWaveform(wf))
-            .catch(() => { });
-        }
-        // Fetch SHAP explanation for defective runs
-        if (data.inference?.pred_label_code !== '00') {
-          fetch(`${API}/explain/${run_id}`)
-            .then(r => r.json())
-            .then(exp => setExplanationData(exp?.explanation || null))
             .catch(() => { });
         }
       })
@@ -91,7 +86,7 @@ export default function Dashboard() {
   };
 
   const totalRuns = stats?.total_runs || runs.length;
-  const anomalies = runs.filter(r => r.label_code !== '00').length;
+  const anomalies = runs.filter((r: any) => (r.pred_label_code ?? r.label_code) !== '00').length;
   const passRate = totalRuns > 0 ? (((totalRuns - anomalies) / totalRuns) * 100).toFixed(1) : '0';
 
   // ——— NAVIGATION ———
@@ -105,11 +100,13 @@ export default function Dashboard() {
   ];
 
   // ——— Filtered runs for Inspection Logs ———
-  const filteredRuns = runs.filter(r => {
-    const matchesSearch = logSearch === '' || r.run_id?.toLowerCase().includes(logSearch.toLowerCase());
+  const filteredRuns = runs.filter((r: any) => {
+    const sid = r.sample_id || r.run_id || '';
+    const matchesSearch = logSearch === '' || sid.toLowerCase().includes(logSearch.toLowerCase());
+    const predCode = String(r.pred_label_code ?? r.label_code ?? '00').padStart(2, '0');
     const matchesFilter = logFilter === 'all'
-      || (logFilter === 'pass' && String(r.label_code).padStart(2, '0') === '00')
-      || (logFilter === 'fail' && String(r.label_code).padStart(2, '0') !== '00');
+      || (logFilter === 'pass' && predCode === '00')
+      || (logFilter === 'fail' && predCode !== '00');
     return matchesSearch && matchesFilter;
   });
 
@@ -344,34 +341,39 @@ export default function Dashboard() {
             {/* Runs Table */}
             <div className={`${styles.tableCard} glass`} style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <div className={styles.chartHeader}>
-                <h3>Inspection Database Logs</h3>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{runs.length} runs</span>
+                <h3>Test Sample Inspector</h3>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{runs.length} samples</span>
               </div>
               <div className={styles.tableContainer} style={{ flex: 1, maxHeight: '500px', overflowY: 'auto' }}>
                 <table className={styles.table}>
                   <thead>
                     <tr>
-                      <th>RUN ID</th>
-                      <th>LABEL</th>
-                      <th>ROWS</th>
+                      <th>SAMPLE ID</th>
+                      <th>PREDICTION</th>
+                      <th>P(DEFECT)</th>
                       <th>ACTION</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {runs.map((r) => (
-                      <tr key={r.run_id} onClick={() => handleSelectRun(r.run_id)} style={{ cursor: 'pointer', backgroundColor: selectedRun === r.run_id ? 'rgba(59, 130, 246, 0.1)' : 'transparent' }}>
-                        <td style={{ fontFamily: 'monospace' }}>{r.run_id}</td>
-                        <td>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: 600, backgroundColor: r.label_code === '00' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: r.label_code === '00' ? 'var(--success)' : 'var(--danger)' }}>
-                            {String(r.label_code).padStart(2, '0')}
-                          </span>
-                        </td>
-                        <td>{r.csv_rows || '—'}</td>
-                        <td>
-                          <button className={styles.actionBtn} style={{ padding: '4px 12px', fontSize: '0.7rem' }}>Analyze</button>
-                        </td>
-                      </tr>
-                    ))}
+                    {runs.map((r: any) => {
+                      const sid = r.sample_id || r.run_id;
+                      const predCode = String(r.pred_label_code ?? '00').padStart(2, '0');
+                      const pDefect = r.p_defect ?? 0;
+                      return (
+                        <tr key={sid} onClick={() => handleSelectRun(sid)} style={{ cursor: 'pointer', backgroundColor: selectedRun === sid ? 'rgba(59, 130, 246, 0.1)' : 'transparent' }}>
+                          <td style={{ fontFamily: 'monospace' }}>{sid}</td>
+                          <td>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: 600, backgroundColor: predCode === '00' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: predCode === '00' ? 'var(--success)' : 'var(--danger)' }}>
+                              {predCode} — {LABEL_MAP[predCode] || 'Unknown'}
+                            </span>
+                          </td>
+                          <td style={{ fontFamily: 'monospace', fontWeight: 600, color: pDefect > 0.5 ? 'var(--danger)' : 'var(--success)' }}>{(pDefect * 100).toFixed(1)}%</td>
+                          <td>
+                            <button className={styles.actionBtn} style={{ padding: '4px 12px', fontSize: '0.7rem' }}>Analyze</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1090,29 +1092,30 @@ export default function Dashboard() {
           {/* Full Logs Table */}
           <div className={`${styles.chartCard} glass`}>
             <div className={styles.chartHeader}>
-              <h3>📋 Complete Inspection Run Logs</h3>
+              <h3>📋 Test Sample Logs</h3>
             </div>
             <div className={styles.tableContainer} style={{ maxHeight: '600px', overflowY: 'auto' }}>
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th>RUN ID</th>
+                    <th>SAMPLE ID</th>
                     <th>STATUS</th>
-                    <th>LABEL</th>
-                    <th>CSV ROWS</th>
+                    <th>PREDICTION</th>
+                    <th>P(DEFECT)</th>
                     <th>AUDIO</th>
-                    <th>VIDEO</th>
-                    <th>COMPLETE</th>
+                    <th>IMAGES</th>
                     <th>ACTION</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRuns.map((r) => {
-                    const code = String(r.label_code ?? '').padStart(2, '0');
+                  {filteredRuns.map((r: any) => {
+                    const sid = r.sample_id || r.run_id;
+                    const code = String(r.pred_label_code ?? r.label_code ?? '').padStart(2, '0');
                     const isPass = code === '00';
+                    const pDefect = r.p_defect ?? 0;
                     return (
-                      <tr key={r.run_id}>
-                        <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{r.run_id}</td>
+                      <tr key={sid}>
+                        <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{sid}</td>
                         <td>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.2rem 0.75rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: isPass ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: isPass ? 'var(--success)' : 'var(--danger)' }}>
                             {isPass ? '✓ PASS' : '✗ DEFECT'}
@@ -1122,15 +1125,14 @@ export default function Dashboard() {
                           <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: LABEL_COLORS[code] || '#6b7280', marginRight: '0.5rem' }}></span>
                           {LABEL_MAP[code] || `Code ${code}`}
                         </td>
-                        <td>{r.csv_rows != null ? r.csv_rows : '—'}</td>
-                        <td style={{ color: r.flac_valid ? 'var(--success)' : 'var(--text-muted)' }}>{r.flac_valid ? '✓' : '✗'}</td>
-                        <td style={{ color: r.avi_valid ? 'var(--success)' : 'var(--text-muted)' }}>{r.avi_valid ? '✓' : '✗'}</td>
-                        <td style={{ color: r.has_all_modalities ? 'var(--success)' : 'var(--warning)' }}>{r.has_all_modalities ? '✓ Full' : '⚠ Partial'}</td>
+                        <td style={{ fontFamily: 'monospace', fontWeight: 600, color: pDefect > 0.5 ? 'var(--danger)' : 'var(--success)' }}>{(pDefect * 100).toFixed(1)}%</td>
+                        <td style={{ color: r.has_audio !== false ? 'var(--success)' : 'var(--text-muted)' }}>{r.has_audio !== false ? '✓' : '✗'}</td>
+                        <td>{r.n_images ?? '—'}</td>
                         <td>
                           <button
                             className={styles.actionBtn}
                             style={{ padding: '4px 14px', fontSize: '0.7rem' }}
-                            onClick={() => { setActivePage('inspector'); handleSelectRun(r.run_id); }}
+                            onClick={() => { setActivePage('inspector'); handleSelectRun(sid); }}
                           >
                             Analyze →
                           </button>

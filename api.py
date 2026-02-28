@@ -33,6 +33,11 @@ app.mount("/static/sampleData", StaticFiles(directory="sampleData"), name="stati
 if os.path.exists("hackathon data"):
     app.mount("/static/hackathon_data", StaticFiles(directory="hackathon data"), name="static_hackathon")
 
+# Mount test_data for serving test sample images/audio
+TEST_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "test_data")
+if os.path.exists(TEST_DATA_DIR):
+    app.mount("/static/test_data", StaticFiles(directory=TEST_DATA_DIR), name="static_test")
+
 def file_to_static_url(filepath: str) -> str:
     """Convert a local file path to a servable static URL."""
     if filepath.startswith("sampleData/") or filepath.startswith("sampleData\\"):
@@ -295,3 +300,126 @@ def explain_run(run_id: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Explanation failed: {str(e)}")
+
+
+# ═══════════════════════════════════════════════════════
+#  TEST DATA ENDPOINTS — serve test samples for inspection
+# ═══════════════════════════════════════════════════════
+
+def _load_submission():
+    """Load submission.csv into a dict keyed by sample_id."""
+    if os.path.exists("submission.csv"):
+        df = pd.read_csv("submission.csv", dtype=str)
+        return {row["sample_id"]: row for _, row in df.iterrows()}
+    return {}
+
+
+def _find_test_sample_dir(sample_id: str):
+    """Return absolute path to a test sample directory."""
+    d = os.path.join(TEST_DATA_DIR, sample_id)
+    if os.path.isdir(d):
+        return d
+    return None
+
+
+@app.get("/test-runs")
+def get_test_runs():
+    """Return list of test samples with predictions from submission.csv."""
+    if not os.path.exists(TEST_DATA_DIR):
+        raise HTTPException(status_code=404, detail="test_data directory not found")
+
+    submissions = _load_submission()
+    samples = sorted(
+        d for d in os.listdir(TEST_DATA_DIR)
+        if os.path.isdir(os.path.join(TEST_DATA_DIR, d)) and d.startswith("sample_")
+    )
+
+    runs = []
+    for sid in samples:
+        sample_dir = os.path.join(TEST_DATA_DIR, sid)
+        flac_files = glob.glob(os.path.join(sample_dir, "*.flac"))
+        img_dir = os.path.join(sample_dir, "images")
+        n_images = len(glob.glob(os.path.join(img_dir, "*.jpg")) + glob.glob(os.path.join(img_dir, "*.png"))) if os.path.isdir(img_dir) else 0
+
+        pred = submissions.get(sid, {})
+        runs.append({
+            "sample_id": sid,
+            "pred_label_code": pred.get("pred_label_code", "??"),
+            "p_defect": float(pred.get("p_defect", 0)),
+            "has_audio": len(flac_files) > 0,
+            "n_images": n_images,
+        })
+
+    return {"runs": runs}
+
+
+@app.get("/infer-test/{sample_id}")
+def infer_test(sample_id: str):
+    """Return prediction + media for a test sample."""
+    sample_dir = _find_test_sample_dir(sample_id)
+    if not sample_dir:
+        raise HTTPException(status_code=404, detail=f"Sample {sample_id} not found")
+
+    submissions = _load_submission()
+    pred = submissions.get(sample_id, {})
+
+    # Find audio
+    flac_files = glob.glob(os.path.join(sample_dir, "*.flac"))
+    audio_url = f"/static/test_data/{sample_id}/{os.path.basename(flac_files[0])}" if flac_files else None
+
+    # Find images
+    img_dir = os.path.join(sample_dir, "images")
+    images = []
+    if os.path.isdir(img_dir):
+        img_files = sorted(glob.glob(os.path.join(img_dir, "*.jpg")) + glob.glob(os.path.join(img_dir, "*.png")))
+        for img in img_files[:6]:
+            images.append(f"/static/test_data/{sample_id}/images/{os.path.basename(img)}")
+
+    pred_code = pred.get("pred_label_code", "00")
+    p_defect = float(pred.get("p_defect", 0))
+
+    return {
+        "run_id": sample_id,
+        "inference": {
+            "pred_label_code": pred_code,
+            "p_defect": p_defect,
+            "type_confidence": p_defect if pred_code != "00" else 1.0 - p_defect,
+        },
+        "images": images,
+        "audio": audio_url,
+        "sensor_telemetry": [],
+    }
+
+
+@app.get("/audio-waveform-test/{sample_id}")
+def get_audio_waveform_test(sample_id: str):
+    """Return downsampled audio waveform for a test sample."""
+    sample_dir = _find_test_sample_dir(sample_id)
+    if not sample_dir:
+        raise HTTPException(status_code=404, detail=f"Sample {sample_id} not found")
+
+    flac_files = glob.glob(os.path.join(sample_dir, "*.flac"))
+    if not flac_files:
+        raise HTTPException(status_code=404, detail="No audio file found")
+
+    try:
+        import librosa
+        y, sr = librosa.load(flac_files[0], sr=None, mono=True)
+        hop_length = max(1, len(y) // 500)
+        rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
+        waveform = rms.tolist()
+
+        window_size = max(1, len(waveform) // 8)
+        rolling_var = pd.Series(waveform).rolling(window=window_size).var().fillna(0).to_numpy()
+        hotspot_end = int(np.argmax(rolling_var))
+        hotspot_start = max(0, hotspot_end - window_size)
+
+        return {
+            "run_id": sample_id,
+            "waveform": waveform,
+            "sample_rate": sr,
+            "duration": float(len(y) / sr),
+            "error_region": [hotspot_start, hotspot_end],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Audio processing failed: {str(e)}")

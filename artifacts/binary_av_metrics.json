@@ -3,7 +3,7 @@
   "precision": 0.8801369863013698,
   "recall": 0.9402439024390243,
   "roc_auc": 0.9472640218878248,
-  "best_threshold": 0.4100000000000001,
+  "best_threshold": 0.62,
   "youden_j": 0.7966050515498315,
   "features_used": "audio+image selected subset",
   "cv_strategy": "GroupKFold(5) on config_folder"

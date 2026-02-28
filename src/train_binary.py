@@ -32,8 +32,8 @@ def extract_sensor_features(csv_path):
         df = pd.read_csv(csv_path)
     except Exception as e:
         logging.error(f"Error reading {csv_path}: {e}")
-        # Return zeros if file unreadable
-        return np.zeros(len(SENSOR_COLS) * 6)
+        # Return zeros if file unreadable — 17 stats per column
+        return np.zeros(len(SENSOR_COLS) * 17)
         
     features = []
     

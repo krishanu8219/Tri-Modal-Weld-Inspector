@@ -1,49 +1,77 @@
+"use client";
+
 import React from 'react';
 import styles from './Sidebar.module.css';
-import { LayoutDashboard, Activity, Database, Settings, LogOut, FileImage, ShieldAlert } from 'lucide-react';
+import { LayoutDashboard, Database, LogOut, FileImage, ShieldAlert, PanelLeftClose, PanelLeft, Cpu } from 'lucide-react';
+import { useNavigation, PageKey } from './NavigationContext';
 
-export default function Sidebar() {
+interface SidebarProps {
+    collapsed: boolean;
+    onToggle: () => void;
+}
+
+const NAV_ITEMS: { key: PageKey; label: string; icon: React.ReactNode; group: 'main' | 'system' }[] = [
+    { key: 'overview', label: 'Dashboard', icon: <LayoutDashboard size={20} />, group: 'main' },
+    { key: 'logs', label: 'Inspection Logs', icon: <FileImage size={20} />, group: 'main' },
+    { key: 'models', label: 'Data Models', icon: <Cpu size={20} />, group: 'system' },
+];
+
+export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+    const { activePage, setActivePage } = useNavigation();
+
+    const mainItems = NAV_ITEMS.filter(i => i.group === 'main');
+    const systemItems = NAV_ITEMS.filter(i => i.group === 'system');
+
     return (
-        <aside className={styles.sidebar}>
+        <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
             <div className={styles.logo}>
-                <ShieldAlert className={styles.logoIcon} />
-                <h2>WeldInspector</h2>
+                <ShieldAlert className={styles.logoIcon} size={24} />
+                {!collapsed && <h2>WeldInspector</h2>}
             </div>
+
+            {/* Toggle button */}
+            <button className={styles.toggleBtn} onClick={onToggle} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+                {collapsed ? <PanelLeft size={20} /> : <PanelLeftClose size={20} />}
+            </button>
 
             <nav className={styles.nav}>
                 <div className={styles.navGroup}>
-                    <p className={styles.navGroupTitle}>MAIN</p>
-                    <a href="#" className={`${styles.navItem} ${styles.active}`}>
-                        <LayoutDashboard size={20} />
-                        <span>Dashboard</span>
-                    </a>
-                    <a href="#" className={styles.navItem}>
-                        <Activity size={20} />
-                        <span>Real-time Scans</span>
-                    </a>
-                    <a href="#" className={styles.navItem}>
-                        <FileImage size={20} />
-                        <span>Inspection Logs</span>
-                    </a>
+                    {!collapsed && <p className={styles.navGroupTitle}>MAIN</p>}
+                    {mainItems.map(item => (
+                        <a
+                            key={item.key}
+                            href="#"
+                            className={`${styles.navItem} ${activePage === item.key ? styles.active : ''}`}
+                            onClick={(e) => { e.preventDefault(); setActivePage(item.key); }}
+                            title={item.label}
+                        >
+                            {item.icon}
+                            {!collapsed && <span>{item.label}</span>}
+                        </a>
+                    ))}
                 </div>
 
                 <div className={styles.navGroup}>
-                    <p className={styles.navGroupTitle}>SYSTEM</p>
-                    <a href="#" className={styles.navItem}>
-                        <Database size={20} />
-                        <span>Data Models</span>
-                    </a>
-                    <a href="#" className={styles.navItem}>
-                        <Settings size={20} />
-                        <span>Settings</span>
-                    </a>
+                    {!collapsed && <p className={styles.navGroupTitle}>SYSTEM</p>}
+                    {systemItems.map(item => (
+                        <a
+                            key={item.key}
+                            href="#"
+                            className={`${styles.navItem} ${activePage === item.key ? styles.active : ''}`}
+                            onClick={(e) => { e.preventDefault(); setActivePage(item.key); }}
+                            title={item.label}
+                        >
+                            {item.icon}
+                            {!collapsed && <span>{item.label}</span>}
+                        </a>
+                    ))}
                 </div>
             </nav>
 
             <div className={styles.footer}>
-                <button className={styles.logoutBtn}>
+                <button className={styles.logoutBtn} title="Logout">
                     <LogOut size={20} />
-                    <span>Logout</span>
+                    {!collapsed && <span>Logout</span>}
                 </button>
             </div>
         </aside>

@@ -1,8 +1,7 @@
 import type { Metadata } from 'next';
 import { Outfit } from 'next/font/google';
 import './globals.css';
-import Sidebar from '@/components/Sidebar';
-import Header from '@/components/Header';
+import LayoutShell from '@/components/LayoutShell';
 
 const outfit = Outfit({
   subsets: ['latin'],
@@ -21,15 +20,9 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={outfit.variable}>
+    <html lang="en" className={outfit.variable} suppressHydrationWarning>
       <body>
-        <Sidebar />
-        <main style={{ marginLeft: '280px', display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-          <Header />
-          <div style={{ flex: 1, padding: '2rem', overflowY: 'auto' }}>
-            {children}
-          </div>
-        </main>
+        <LayoutShell>{children}</LayoutShell>
       </body>
     </html>
   );

@@ -55,10 +55,35 @@ class DefectClassifierPipeline:
         audio_f = extract_audio_features(flac_path)
         image_f = extract_image_features(run_dir)
         
-        features = np.concatenate([sensor_f, audio_f, image_f]).reshape(1, -1)
+        features = np.concatenate([sensor_f, audio_f, image_f])
         
-        # 1. Binary prediction
-        bin_probs = self.binary_model.predict_proba(features)
+        # Defensive: ensure feature vector is exactly 319 dims (102 sensor + 120 audio + 97 image)
+        expected_dim = 319
+        if len(features) != expected_dim:
+            logging.warning(
+                f"Feature dimension mismatch: got {len(features)} (sensor={len(sensor_f)}, "
+                f"audio={len(audio_f)}, image={len(image_f)}), expected {expected_dim}. "
+                f"Padding/truncating to {expected_dim}."
+            )
+            if len(features) < expected_dim:
+                features = np.concatenate([features, np.zeros(expected_dim - len(features))])
+            else:
+                features = features[:expected_dim]
+        
+        features = features.reshape(1, -1)
+        
+        # Use base XGBoost estimator (not wrapped CalibratedClassifier) for probabilities
+        # CalibratedClassifierCV crushes probs to exact 0/1, hiding meaningful variation
+        def get_base_proba(model, X):
+            """Extract predict_proba from the underlying XGBoost, bypassing calibration."""
+            try:
+                base = model.calibrated_classifiers_[0].estimator
+                return base.predict_proba(X)
+            except (AttributeError, IndexError):
+                return model.predict_proba(X)
+        
+        # 1. Binary prediction — use base estimator for real probabilities
+        bin_probs = get_base_proba(self.binary_model, features)
         
         # Determine probability of defect
         if bin_probs.shape[1] > 1:
@@ -74,8 +99,9 @@ class DefectClassifierPipeline:
                 "type_confidence": None
             }
             
-        # 2. Multi-class prediction
-        multi_probs = self.multiclass_model.predict_proba(features)
+        # 2. Multi-class prediction — use base estimator 
+        raw_multi_probs = self.multiclass_model.predict_proba(features)
+        multi_probs = get_base_proba(self.multiclass_model, features) if hasattr(self.multiclass_model, 'calibrated_classifiers_') else raw_multi_probs
         classes = self.le.inverse_transform(self.multiclass_model.classes_)
         
         # Sort by descending probability
@@ -97,19 +123,10 @@ class DefectClassifierPipeline:
         
         top1_prob = float(multi_probs[0, best_idx])
         
-        # Compute confidence that combines BOTH pipeline stages:
-        # Stage 1 certainty (p_defect) × Stage 2 discriminability (multiclass margin)
-        remaining = [multi_probs[0, i] for i in range(len(classes)) if i != best_idx]
-        top2_prob = float(max(remaining)) if remaining else 0.0
-        
-        # Margin ratio: how much the top class dominates [0.5, 1.0]
-        denom = top1_prob + top2_prob
-        margin_ratio = (top1_prob / denom) if denom > 0 else 0.5
-        
-        # Final confidence = binary certainty × type discriminability
-        # With real data: 0.95 × 0.85 = 0.81 — high and meaningful
-        # With dummy data: 0.89 × 0.52 = 0.46 — honest about uncertainty
-        type_confidence = float(p_defect) * margin_ratio
+        # type_confidence = raw multiclass probability of the predicted class
+        # This reflects how sure the model is about THIS specific defect type
+        # e.g. 0.68 → 68% it's "Burn Through" vs other defect types
+        type_confidence = top1_prob
         
         return {
             "pred_label_code": str(pred_label_code).zfill(2),

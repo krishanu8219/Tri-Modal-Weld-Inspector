@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import styles from './page.module.css';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -8,8 +8,10 @@ import {
 } from 'recharts';
 import {
   Activity, AlertTriangle, CheckCircle, Clock, Volume2, Image as ImageIcon,
-  Database, TrendingUp, Download, FileText, BarChart3, Shield, Zap, Eye
+  Database, TrendingUp, Download, FileText, BarChart3, Shield, Zap, Eye,
+  Search, Filter, Cpu, GitBranch, Layers, Target
 } from 'lucide-react';
+import { useNavigation } from '@/components/NavigationContext';
 
 const API = 'http://127.0.0.1:8000';
 
@@ -24,7 +26,9 @@ const LABEL_COLORS: Record<string, string> = {
 };
 
 export default function Dashboard() {
-  const [activePage, setActivePage] = useState('overview');
+  const { activePage, setActivePage } = useNavigation();
+  const [logSearch, setLogSearch] = useState('');
+  const [logFilter, setLogFilter] = useState<string>('all');
   const [runs, setRuns] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>(null);
@@ -35,6 +39,9 @@ export default function Dashboard() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [inferData, setInferData] = useState<any>(null);
   const [inferLoading, setInferLoading] = useState(false);
+
+  // Audio waveform state
+  const [audioWaveform, setAudioWaveform] = useState<any>(null);
 
   useEffect(() => {
     Promise.all([
@@ -55,9 +62,20 @@ export default function Dashboard() {
     setSelectedRun(run_id);
     setInferLoading(true);
     setInferData(null);
+    setAudioWaveform(null);
     fetch(`${API}/infer/${run_id}`)
       .then(res => res.json())
-      .then(data => { setInferData(data); setInferLoading(false); })
+      .then(data => {
+        setInferData(data);
+        setInferLoading(false);
+        // Fetch audio waveform if available
+        if (data.audio) {
+          fetch(`${API}/audio-waveform/${run_id}`)
+            .then(r => r.json())
+            .then(wf => setAudioWaveform(wf))
+            .catch(() => { });
+        }
+      })
       .catch(() => setInferLoading(false));
   };
 
@@ -69,9 +87,20 @@ export default function Dashboard() {
   const navItems = [
     { key: 'overview', label: 'Dataset Overview', icon: <Database size={18} /> },
     { key: 'inspector', label: 'Run Inspector', icon: <Eye size={18} /> },
+    { key: 'logs', label: 'Inspection Logs', icon: <FileText size={18} /> },
+    { key: 'models', label: 'Data Models', icon: <Cpu size={18} /> },
     { key: 'evaluation', label: 'Evaluation Report', icon: <BarChart3 size={18} /> },
-    { key: 'export', label: 'Export & Data Card', icon: <FileText size={18} /> },
+    { key: 'export', label: 'Export & Data Card', icon: <Download size={18} /> },
   ];
+
+  // ——— Filtered runs for Inspection Logs ———
+  const filteredRuns = runs.filter(r => {
+    const matchesSearch = logSearch === '' || r.run_id?.toLowerCase().includes(logSearch.toLowerCase());
+    const matchesFilter = logFilter === 'all'
+      || (logFilter === 'pass' && String(r.label_code).padStart(2, '0') === '00')
+      || (logFilter === 'fail' && String(r.label_code).padStart(2, '0') !== '00');
+    return matchesSearch && matchesFilter;
+  });
 
   return (
     <div className={`${styles.dashboard} animate-fade-in`}>
@@ -89,7 +118,7 @@ export default function Dashboard() {
           <button
             key={item.key}
             className={`${styles.tab} ${activePage === item.key ? styles.activeTab : ''}`}
-            onClick={() => setActivePage(item.key)}
+            onClick={() => setActivePage(item.key as any)}
             style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
           >
             {item.icon} {item.label}
@@ -167,7 +196,7 @@ export default function Dashboard() {
                       <Tooltip
                         contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', borderRadius: '8px' }}
                         formatter={(value: any, name: any, props: any) => [value, props.payload.name]}
-                        labelFormatter={(label: string) => `Code ${label}`}
+                        labelFormatter={(label: any) => `Code ${label}`}
                       />
                       <Bar dataKey="count" radius={[6, 6, 0, 0]}>
                         {Object.entries(stats.label_counts).map(([code]) => (
@@ -367,86 +396,158 @@ export default function Dashboard() {
                 )}
 
                 {inferData && inferData.inference && (
-                  <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                    {/* Verdict Banner */}
-                    <div style={{ padding: '1.25rem', borderRadius: 'var(--radius-lg)', backgroundColor: inferData.inference.pred_label_code === "00" ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', border: `1px solid ${inferData.inference.pred_label_code === "00" ? 'var(--success)' : 'var(--danger)'}` }}>
-                      <h2 style={{ color: inferData.inference.pred_label_code === "00" ? 'var(--success)' : 'var(--danger)', marginBottom: '0.5rem', fontSize: '1.25rem' }}>
-                        {inferData.inference.pred_label_code === "00" ? '✅ PASSED (Code 00)' : `⚠️ FAILED — ${LABEL_MAP[inferData.inference.pred_label_code] || 'Defect'} (${inferData.inference.pred_label_code})`}
-                      </h2>
-                      <div style={{ display: 'flex', gap: '2rem' }}>
-                        {inferData.inference.pred_label_code !== "00" && (
-                          <>
-                            <div>
-                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>P(Defect)</span>
-                              <p style={{ fontWeight: 700, fontSize: '1.1rem' }}>{(inferData.inference.p_defect * 100).toFixed(1)}%</p>
+                  (() => {
+                    const code = String(inferData.inference.pred_label_code ?? '').padStart(2, '0');
+                    const isPass = code === '00';
+                    const pDefect = inferData.inference.p_defect ?? 0;
+                    const typeConf = inferData.inference.type_confidence;
+                    return (
+                      <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                        {/* Verdict Banner */}
+                        <div style={{ padding: '1.25rem', borderRadius: 'var(--radius-lg)', backgroundColor: isPass ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', border: `1px solid ${isPass ? 'var(--success)' : 'var(--danger)'}` }}>
+                          <h2 style={{ color: isPass ? 'var(--success)' : 'var(--danger)', marginBottom: '0.5rem', fontSize: '1.25rem' }}>
+                            {isPass ? '✅ PASSED (Code 00)' : `⚠️ FAILED — ${LABEL_MAP[code] || 'Defect'} (${code})`}
+                          </h2>
+                          <div style={{ display: 'flex', gap: '2rem' }}>
+                            {!isPass && (
+                              <>
+                                <div>
+                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>P(Defect)</span>
+                                  <p style={{ fontWeight: 700, fontSize: '1.1rem' }}>{(pDefect * 100).toFixed(1)}%</p>
+                                </div>
+                                {typeConf != null && (
+                                  <div>
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Confidence</span>
+                                    <p style={{ fontWeight: 700, fontSize: '1.1rem' }}>{(typeConf * 100).toFixed(1)}%</p>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Sensor Telemetry */}
+                        {inferData.sensor_telemetry && Array.isArray(inferData.sensor_telemetry.values) && inferData.sensor_telemetry.values.length > 0 && (
+                          <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '1.25rem', borderRadius: 'var(--radius-lg)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                              <Activity size={16} color="var(--accent-primary)" />
+                              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{inferData.sensor_telemetry.metric_name} Trace</span>
                             </div>
-                            {inferData.inference.type_confidence != null && (
-                              <div>
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Confidence</span>
-                                <p style={{ fontWeight: 700, fontSize: '1.1rem' }}>{(inferData.inference.type_confidence * 100).toFixed(1)}%</p>
+                            <div style={{ height: '180px', width: '100%' }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={inferData.sensor_telemetry.values.map((v: number, i: number) => ({ index: i, value: v }))}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                                  <XAxis dataKey="index" hide />
+                                  <YAxis stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+                                  <Tooltip
+                                    contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', borderRadius: '8px' }}
+                                    labelStyle={{ display: 'none' }}
+                                    formatter={(value: any) => [Number(value).toFixed(2), 'Amplitude']}
+                                  />
+                                  {inferData.sensor_telemetry.hotspot && (
+                                    <ReferenceArea x1={inferData.sensor_telemetry.hotspot[0]} x2={inferData.sensor_telemetry.hotspot[1]} fill="var(--danger)" fillOpacity={0.15} />
+                                  )}
+                                  <Line type="monotone" dataKey="value" stroke="var(--accent-primary)" strokeWidth={2} dot={false} />
+                                </LineChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Visual Frames — Full Width, Large */}
+                        <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '1.25rem', borderRadius: 'var(--radius-lg)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                            <ImageIcon size={18} color="var(--accent-primary)" />
+                            <span style={{ fontSize: '0.95rem', fontWeight: 600 }}>Visual Frames</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>{inferData.images?.length || 0} keyframes</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(inferData.images?.length || 1, 3)}, 1fr)`, gap: '1rem' }}>
+                            {inferData.images?.map((img: string, i: number) => (
+                              <div key={i} style={{ position: 'relative', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                <img
+                                  src={`${API}${img}`}
+                                  alt={`Keyframe ${i + 1}`}
+                                  style={{ width: '100%', height: '220px', objectFit: 'cover', display: 'block' }}
+                                />
+                                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0.5rem 0.75rem', background: 'linear-gradient(transparent, rgba(0,0,0,0.8))', fontSize: '0.7rem', color: '#fff', fontWeight: 500 }}>
+                                  Frame {i + 1}
+                                </div>
+                              </div>
+                            ))}
+                            {(!inferData.images || inferData.images.length === 0) && (
+                              <div style={{ display: 'flex', height: '160px', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gridColumn: '1 / -1' }}>
+                                <ImageIcon size={32} style={{ marginRight: '0.75rem', opacity: 0.4 }} />
+                                No frames available for this run
                               </div>
                             )}
-                          </>
-                        )}
-                      </div>
-                    </div>
+                          </div>
+                        </div>
 
-                    {/* Sensor Telemetry */}
-                    {inferData.sensor_telemetry && inferData.sensor_telemetry.values && (
-                      <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '1.25rem', borderRadius: 'var(--radius-lg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                          <Activity size={16} color="var(--accent-primary)" />
-                          <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{inferData.sensor_telemetry.metric_name} Trace</span>
-                        </div>
-                        <div style={{ height: '180px', width: '100%' }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={inferData.sensor_telemetry.values.map((v: number, i: number) => ({ index: i, value: v }))}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-                              <XAxis dataKey="index" hide />
-                              <YAxis stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-                              <Tooltip
-                                contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', borderRadius: '8px' }}
-                                labelStyle={{ display: 'none' }}
-                                formatter={(value: any) => [Number(value).toFixed(2), 'Amplitude']}
-                              />
-                              {inferData.sensor_telemetry.hotspot && (
-                                <ReferenceArea x1={inferData.sensor_telemetry.hotspot[0]} x2={inferData.sensor_telemetry.hotspot[1]} fill="var(--danger)" fillOpacity={0.15} />
-                              )}
-                              <Line type="monotone" dataKey="value" stroke="var(--accent-primary)" strokeWidth={2} dot={false} />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        </div>
-                      </div>
-                    )}
+                        {/* Acoustic Analysis — Waveform + Player */}
+                        <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '1.25rem', borderRadius: 'var(--radius-lg)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                            <Volume2 size={18} color="var(--accent-secondary)" />
+                            <span style={{ fontSize: '0.95rem', fontWeight: 600 }}>Acoustic Signature Analysis</span>
+                          </div>
 
-                    {/* Images + Audio Row */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                      <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '1rem', borderRadius: 'var(--radius-lg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                          <ImageIcon size={16} color="var(--accent-primary)" />
-                          <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Visual Frames</span>
-                        </div>
-                        <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto' }}>
-                          {inferData.images?.map((img: string, i: number) => (
-                            <img key={i} src={`${API}${img}`} alt="frame" style={{ height: '70px', borderRadius: '4px', objectFit: 'cover' }} />
-                          ))}
-                          {(!inferData.images || inferData.images.length === 0) && (
-                            <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>No frames available</p>
+                          {/* Audio Waveform Chart */}
+                          {audioWaveform && audioWaveform.waveform && (
+                            <div style={{ height: '160px', width: '100%', marginBottom: '1rem' }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={audioWaveform.waveform.map((v: number, i: number) => ({ index: i, amplitude: v }))}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                                  <XAxis dataKey="index" hide />
+                                  <YAxis stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+                                  <Tooltip
+                                    contentStyle={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', borderRadius: '8px', fontSize: '0.8rem' }}
+                                    labelStyle={{ display: 'none' }}
+                                    formatter={(value: any) => [Number(value).toFixed(4), 'Amplitude']}
+                                  />
+                                  {audioWaveform.error_region && (
+                                    <ReferenceArea
+                                      x1={audioWaveform.error_region[0]}
+                                      x2={audioWaveform.error_region[1]}
+                                      fill="var(--danger)"
+                                      fillOpacity={0.2}
+                                      stroke="var(--danger)"
+                                      strokeOpacity={0.6}
+                                      strokeDasharray="4 4"
+                                      label={{ value: '⚠ Anomaly Region', position: 'top', fill: 'var(--danger)', fontSize: 11 }}
+                                    />
+                                  )}
+                                  <defs>
+                                    <linearGradient id="audioGrad" x1="0" y1="0" x2="0" y2="1">
+                                      <stop offset="5%" stopColor="var(--accent-secondary)" stopOpacity={0.4} />
+                                      <stop offset="95%" stopColor="var(--accent-secondary)" stopOpacity={0.05} />
+                                    </linearGradient>
+                                  </defs>
+                                  <Area type="monotone" dataKey="amplitude" stroke="var(--accent-secondary)" strokeWidth={1.5} fill="url(#audioGrad)" dot={false} />
+                                </AreaChart>
+                              </ResponsiveContainer>
+                            </div>
+                          )}
+
+                          {/* Fallback: use sensor-style trace if no dedicated waveform */}
+                          {!audioWaveform && inferData.sensor_telemetry && (
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem', padding: '0.5rem', backgroundColor: 'rgba(59, 130, 246, 0.05)', borderRadius: 'var(--radius-md)' }}>
+                              ℹ Audio waveform rendering from acoustic data
+                            </div>
+                          )}
+
+                          {/* Audio Player */}
+                          {inferData.audio && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                              <audio controls src={`${API}${inferData.audio}`} style={{ flex: 1, height: '40px' }} />
+                            </div>
+                          )}
+                          {!inferData.audio && (
+                            <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>No audio file available</p>
                           )}
                         </div>
                       </div>
-                      <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '1rem', borderRadius: 'var(--radius-lg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                          <Volume2 size={16} color="var(--accent-secondary)" />
-                          <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Acoustic Signature</span>
-                        </div>
-                        {inferData.audio && (
-                          <audio controls src={`${API}${inferData.audio}`} style={{ width: '100%', height: '36px' }} />
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                    )
+                  })())
+                }
               </div>
             </div>
           </div>
@@ -523,7 +624,7 @@ export default function Dashboard() {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                 {[
-                  { label: 'Macro F1', value: metrics?.multiclass?.macro_f1, color: '#10b981' },
+                  { label: 'Pipeline Type F1', value: metrics?.pipeline?.type_macro_f1, color: '#10b981' },
                   { label: 'Weighted F1', value: metrics?.multiclass?.weighted_f1, color: '#3b82f6' },
                   { label: 'Macro Precision', value: metrics?.multiclass?.macro_precision, color: '#f59e0b' },
                   { label: 'Macro Recall', value: metrics?.multiclass?.macro_recall, color: '#8b5cf6' },
@@ -735,6 +836,284 @@ export default function Dashboard() {
                     <li>Rare defect types may be under-represented</li>
                     <li>Crater vs burn-through confusion at end-of-run</li>
                   </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== PAGE: INSPECTION LOGS ===== */}
+      {activePage === 'logs' && (
+        <div className="animate-fade-in">
+          {/* Search & Filter Bar */}
+          <div className={`${styles.chartCard} glass`} style={{ marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: '250px', position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  placeholder="Search by Run ID..."
+                  value={logSearch}
+                  onChange={(e) => setLogSearch(e.target.value)}
+                  style={{ width: '100%', padding: '0.75rem 0.75rem 0.75rem 2.5rem', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)', fontSize: '0.9rem', outline: 'none' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {['all', 'pass', 'fail'].map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setLogFilter(f)}
+                    style={{ padding: '0.6rem 1.25rem', borderRadius: 'var(--radius-md)', fontSize: '0.8rem', fontWeight: 600, backgroundColor: logFilter === f ? (f === 'pass' ? 'rgba(16,185,129,0.15)' : f === 'fail' ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.15)') : 'var(--bg-tertiary)', color: logFilter === f ? (f === 'pass' ? 'var(--success)' : f === 'fail' ? 'var(--danger)' : 'var(--accent-primary)') : 'var(--text-secondary)', border: '1px solid ' + (logFilter === f ? 'transparent' : 'var(--border-color)'), cursor: 'pointer', transition: 'all 150ms ease' }}
+                  >
+                    {f === 'all' ? `All (${runs.length})` : f === 'pass' ? `Pass (${runs.filter(r => String(r.label_code).padStart(2, '0') === '00').length})` : `Defect (${runs.filter(r => String(r.label_code).padStart(2, '0') !== '00').length})`}
+                  </button>
+                ))}
+              </div>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{filteredRuns.length} results</span>
+            </div>
+          </div>
+
+          {/* Full Logs Table */}
+          <div className={`${styles.chartCard} glass`}>
+            <div className={styles.chartHeader}>
+              <h3>📋 Complete Inspection Run Logs</h3>
+            </div>
+            <div className={styles.tableContainer} style={{ maxHeight: '600px', overflowY: 'auto' }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>RUN ID</th>
+                    <th>STATUS</th>
+                    <th>LABEL</th>
+                    <th>CSV ROWS</th>
+                    <th>AUDIO</th>
+                    <th>VIDEO</th>
+                    <th>COMPLETE</th>
+                    <th>ACTION</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRuns.map((r) => {
+                    const code = String(r.label_code ?? '').padStart(2, '0');
+                    const isPass = code === '00';
+                    return (
+                      <tr key={r.run_id}>
+                        <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{r.run_id}</td>
+                        <td>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.2rem 0.75rem', borderRadius: '9999px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: isPass ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: isPass ? 'var(--success)' : 'var(--danger)' }}>
+                            {isPass ? '✓ PASS' : '✗ DEFECT'}
+                          </span>
+                        </td>
+                        <td>
+                          <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: LABEL_COLORS[code] || '#6b7280', marginRight: '0.5rem' }}></span>
+                          {LABEL_MAP[code] || `Code ${code}`}
+                        </td>
+                        <td>{r.csv_rows || '—'}</td>
+                        <td style={{ color: r.flac_valid ? 'var(--success)' : 'var(--text-muted)' }}>{r.flac_valid ? '✓' : '✗'}</td>
+                        <td style={{ color: r.avi_valid ? 'var(--success)' : 'var(--text-muted)' }}>{r.avi_valid ? '✓' : '✗'}</td>
+                        <td style={{ color: r.has_all_modalities ? 'var(--success)' : 'var(--warning)' }}>{r.has_all_modalities ? '✓ Full' : '⚠ Partial'}</td>
+                        <td>
+                          <button
+                            className={styles.actionBtn}
+                            style={{ padding: '4px 14px', fontSize: '0.7rem' }}
+                            onClick={() => { setActivePage('inspector'); handleSelectRun(r.run_id); }}
+                          >
+                            Analyze →
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== PAGE: DATA MODELS ===== */}
+      {activePage === 'models' && (
+        <div className="animate-fade-in">
+          {/* Architecture Overview */}
+          <div className={styles.statsGrid} style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '1.5rem' }}>
+            <div className={`${styles.statCard} glass`} style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.1) 0%, rgba(59,130,246,0.1) 100%)' }}>
+              <div className={styles.statIconWrapper} style={{ backgroundColor: 'rgba(139,92,246,0.2)', color: '#8b5cf6' }}>
+                <GitBranch size={24} />
+              </div>
+              <div className={styles.statContent}>
+                <p className={styles.statLabel}>Architecture</p>
+                <h3 className={styles.statValue} style={{ fontSize: '1.1rem' }}>Chained XGBoost</h3>
+                <p className={styles.statTrend} style={{ color: 'var(--text-muted)' }}>Binary → Multi-class</p>
+              </div>
+            </div>
+            <div className={`${styles.statCard} glass`}>
+              <div className={styles.statIconWrapper} style={{ backgroundColor: 'rgba(59,130,246,0.1)', color: 'var(--accent-primary)' }}>
+                <Layers size={24} />
+              </div>
+              <div className={styles.statContent}>
+                <p className={styles.statLabel}>Feature Fusion</p>
+                <h3 className={styles.statValue} style={{ fontSize: '1.1rem' }}>Late Fusion</h3>
+                <p className={styles.statTrend} style={{ color: 'var(--text-muted)' }}>Sensor + Audio + Vision</p>
+              </div>
+            </div>
+            <div className={`${styles.statCard} glass`}>
+              <div className={styles.statIconWrapper} style={{ backgroundColor: 'rgba(16,185,129,0.1)', color: 'var(--success)' }}>
+                <Target size={24} />
+              </div>
+              <div className={styles.statContent}>
+                <p className={styles.statLabel}>Optimal Threshold</p>
+                <h3 className={styles.statValue}>{metrics?.pipeline?.best_pipeline_threshold?.toFixed(3) || 'N/A'}</h3>
+                <p className={styles.statTrend} style={{ color: 'var(--success)' }}>Tuned on FinalScore</p>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.chartsGrid}>
+            {/* Stage 1: Binary Gate */}
+            <div className={`${styles.chartCard} glass`}>
+              <div className={styles.chartHeader}>
+                <h3>🔒 Stage 1 — Binary Gate</h3>
+                <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', borderRadius: '9999px', backgroundColor: 'rgba(59,130,246,0.15)', color: 'var(--accent-primary)', fontWeight: 600 }}>XGBClassifier</span>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>Predicts P(Defect) — if below threshold, classify as "Good Weld" (00).</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+                {[
+                  { label: 'Binary F1', value: metrics?.pipeline?.binary_f1 || metrics?.binary?.f1, color: '#10b981' },
+                  { label: 'Precision', value: metrics?.binary?.precision, color: '#3b82f6' },
+                  { label: 'Recall', value: metrics?.binary?.recall, color: '#f59e0b' },
+                  { label: 'ROC-AUC', value: metrics?.binary?.roc_auc, color: '#8b5cf6' },
+                  { label: 'PR-AUC', value: metrics?.binary?.pr_auc, color: '#ec4899' },
+                  { label: 'ECE (Calibration)', value: metrics?.binary?.ece, color: '#6366f1' },
+                ].map((m, i) => (
+                  <div key={i} style={{ padding: '0.85rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', borderLeft: `3px solid ${m.color}` }}>
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>{m.label}</p>
+                    <p style={{ fontSize: '1.15rem', fontWeight: 700 }}>{m.value != null ? m.value.toFixed(4) : 'N/A'}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Overfitting Check */}
+              {diagnostics?.binary && (
+                <div style={{ marginTop: '1.25rem', padding: '1rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                    <p style={{ fontWeight: 600, fontSize: '0.85rem' }}>Fit Diagnostics</p>
+                    <span style={{ padding: '0.15rem 0.6rem', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: 600, backgroundColor: diagnostics.binary.status === 'good' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: diagnostics.binary.status === 'good' ? 'var(--success)' : '#f59e0b' }}>
+                      {diagnostics.binary.verdict}
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', fontSize: '0.8rem' }}>
+                    <div><span style={{ color: 'var(--text-muted)' }}>Train F1: </span><strong>{diagnostics.binary.train_f1?.toFixed(4)}</strong></div>
+                    <div><span style={{ color: 'var(--text-muted)' }}>Val F1: </span><strong>{diagnostics.binary.val_f1?.toFixed(4)}</strong></div>
+                    <div><span style={{ color: 'var(--text-muted)' }}>Gap: </span><strong style={{ color: Math.abs(diagnostics.binary.train_f1 - diagnostics.binary.val_f1) > 0.05 ? '#f59e0b' : 'var(--success)' }}>{(diagnostics.binary.train_f1 - diagnostics.binary.val_f1).toFixed(4)}</strong></div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Stage 2: Multi-class Classifier */}
+            <div className={`${styles.chartCard} glass`}>
+              <div className={styles.chartHeader}>
+                <h3>🎯 Stage 2 — Multi-class Classifier</h3>
+                <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', borderRadius: '9999px', backgroundColor: 'rgba(245,158,11,0.15)', color: '#f59e0b', fontWeight: 600 }}>XGBClassifier</span>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>Ranks defect types for runs classified as defective by Stage 1.</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+                {[
+                  { label: 'Pipeline Type F1', value: metrics?.pipeline?.type_macro_f1, color: '#10b981' },
+                  { label: 'Weighted F1', value: metrics?.multiclass?.weighted_f1, color: '#3b82f6' },
+                  { label: 'Macro Precision', value: metrics?.multiclass?.macro_precision, color: '#f59e0b' },
+                  { label: 'Macro Recall', value: metrics?.multiclass?.macro_recall, color: '#8b5cf6' },
+                ].map((m, i) => (
+                  <div key={i} style={{ padding: '0.85rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', borderLeft: `3px solid ${m.color}` }}>
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>{m.label}</p>
+                    <p style={{ fontSize: '1.15rem', fontWeight: 700 }}>{m.value != null ? m.value.toFixed(4) : 'N/A'}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Overfitting Check */}
+              {diagnostics?.multiclass && (
+                <div style={{ marginTop: '1.25rem', padding: '1rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                    <p style={{ fontWeight: 600, fontSize: '0.85rem' }}>Fit Diagnostics</p>
+                    <span style={{ padding: '0.15rem 0.6rem', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: 600, backgroundColor: diagnostics.multiclass.status === 'good' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: diagnostics.multiclass.status === 'good' ? 'var(--success)' : '#f59e0b' }}>
+                      {diagnostics.multiclass.verdict}
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', fontSize: '0.8rem' }}>
+                    <div><span style={{ color: 'var(--text-muted)' }}>Train F1: </span><strong>{diagnostics.multiclass.train_f1?.toFixed(4)}</strong></div>
+                    <div><span style={{ color: 'var(--text-muted)' }}>Val F1: </span><strong>{diagnostics.multiclass.val_f1?.toFixed(4)}</strong></div>
+                    <div><span style={{ color: 'var(--text-muted)' }}>Gap: </span><strong style={{ color: Math.abs(diagnostics.multiclass.train_f1 - diagnostics.multiclass.val_f1) > 0.05 ? '#f59e0b' : 'var(--success)' }}>{(diagnostics.multiclass.train_f1 - diagnostics.multiclass.val_f1).toFixed(4)}</strong></div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Feature Engineering Summary */}
+          <div className={`${styles.chartCard} glass`} style={{ marginTop: '1.5rem' }}>
+            <div className={styles.chartHeader}>
+              <h3>🧮 Feature Engineering Pipeline</h3>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+              <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)', borderTop: '3px solid #3b82f6' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  <Activity size={18} color="#3b82f6" />
+                  <span style={{ fontWeight: 600 }}>Sensor Features</span>
+                </div>
+                <ul style={{ paddingLeft: '1.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+                  <li>Global aggregates (mean, std, percentiles)</li>
+                  <li>IQR, range, first-diff stats</li>
+                  <li>Tail-end statistics</li>
+                  <li>Current, Voltage, Feed, Pressure</li>
+                </ul>
+              </div>
+              <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)', borderTop: '3px solid #8b5cf6' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  <Volume2 size={18} color="#8b5cf6" />
+                  <span style={{ fontWeight: 600 }}>Audio Features</span>
+                </div>
+                <ul style={{ paddingLeft: '1.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+                  <li>13 MFCCs + delta coefficients</li>
+                  <li>Spectral centroid / rolloff</li>
+                  <li>Zero-crossing rate (ZCR)</li>
+                  <li>RMS energy envelope</li>
+                </ul>
+              </div>
+              <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)', borderTop: '3px solid #ec4899' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  <ImageIcon size={18} color="#ec4899" />
+                  <span style={{ fontWeight: 600 }}>Vision Features</span>
+                </div>
+                <ul style={{ paddingLeft: '1.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+                  <li>Color histograms (32 bins × 3 ch)</li>
+                  <li>Canny edge density</li>
+                  <li>Keyframe extraction from AVI</li>
+                  <li>OpenCV preprocessing</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          {/* Pipeline Score */}
+          <div className={`${styles.chartCard} glass`} style={{ marginTop: '1.5rem' }}>
+            <div className={styles.chartHeader}>
+              <h3>🏆 End-to-End Pipeline Score</h3>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', padding: '1rem 0' }}>
+              <div style={{ textAlign: 'center', flex: 1 }}>
+                <p style={{ fontSize: '3rem', fontWeight: 800, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', WebkitBackgroundClip: 'text', color: 'transparent' }}>{metrics?.pipeline?.final_score?.toFixed(4) || 'N/A'}</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>Final Score = 0.6 × BinF1 + 0.4 × TypeMacroF1</p>
+              </div>
+              <div style={{ display: 'flex', gap: '1.5rem' }}>
+                <div style={{ textAlign: 'center', padding: '1rem 1.5rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--success)' }}>{metrics?.pipeline?.binary_f1?.toFixed(4) || 'N/A'}</p>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Binary F1 (×0.6)</p>
+                </div>
+                <div style={{ textAlign: 'center', padding: '1rem 1.5rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)' }}>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#f59e0b' }}>{metrics?.pipeline?.type_macro_f1?.toFixed(4) || 'N/A'}</p>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Type Macro F1 (×0.4)</p>
                 </div>
               </div>
             </div>

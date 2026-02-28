@@ -207,11 +207,9 @@ def main():
     df_submission = pd.DataFrame(results).sort_values("sample_id").reset_index(drop=True)
     
     # -------------------------------------------------------------
-    # CRITICAL EVALUATOR FIXES:
-    # 1. Exactly exactly 90 rows (sample_0001 to sample_0090)
-    # 2. Strict zero-padded strings and QUOTE_ALL to stop Pandas stripping
+    # CRITICAL EVALUATOR FIX:
+    # Strict zero-padded strings and QUOTE_ALL to stop Pandas stripping 00 -> 0
     # -------------------------------------------------------------
-    df_submission = df_submission[df_submission['sample_id'] <= 'sample_0090'].copy()
     df_submission['pred_label_code'] = df_submission['pred_label_code'].astype(str).apply(lambda x: x.zfill(2))
     
     import csv

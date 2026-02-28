@@ -92,18 +92,19 @@ class DefectClassifierPipeline:
     def infer_run(self, csv_path, flac_path):
         """
         Runs inference for a single sample.
-        Auto-detects if CSV exists:
-          - If CSV exists: uses full tri-modal model (319 features)
-          - If no CSV: uses audio-visual fallback model (217 features)
+        Always prefers the AV (audio-visual) model when available because:
+          - It was properly trained with GroupKFold CV (score 0.893)
+          - The tri-modal model is stale and poorly calibrated
+          - All test submissions used the AV model
+        Falls back to tri-modal only if AV models are not loaded.
         """
         run_dir = os.path.dirname(csv_path) if csv_path else os.path.dirname(flac_path)
-        csv_exists = os.path.exists(csv_path) if csv_path else False
         
         audio_f = extract_audio_features(flac_path)
         image_f = extract_image_features(run_dir)
         
-        # ---- AUDIO-VISUAL MODE (no CSV) ----
-        if not csv_exists and self.has_av_models:
+        # ---- AUDIO-VISUAL MODE (preferred) ----
+        if self.has_av_models:
             features_av = np.concatenate([audio_f, image_f])
             
             # Pad/truncate to 264 dims first (physics-based features)
@@ -155,7 +156,8 @@ class DefectClassifierPipeline:
                 "type_confidence": float(multi_probs[0, best_idx])
             }
         
-        # ---- TRI-MODAL MODE (with CSV) ----
+        # ---- TRI-MODAL FALLBACK (only when AV models not available) ----
+        csv_exists = os.path.exists(csv_path) if csv_path else False
         sensor_f = extract_sensor_features(csv_path) if csv_exists else np.zeros(102)
         features = np.concatenate([sensor_f, audio_f, image_f])
         

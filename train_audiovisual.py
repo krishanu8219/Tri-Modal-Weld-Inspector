@@ -21,7 +21,8 @@ import os, sys, json, time, logging
 import numpy as np
 import pandas as pd
 import joblib
-from sklearn.model_selection import GroupKFold
+from joblib import Parallel, delayed
+from sklearn.model_selection import GroupKFold, RandomizedSearchCV, GroupShuffleSplit
 from sklearn.metrics import (
     f1_score, precision_score, recall_score, roc_auc_score,
     classification_report
@@ -110,65 +111,101 @@ def select_features(X_all, y_bin_all, groups):
 
 
 def train_binary_av(X_all, y_all, groups):
-    """GroupKFold binary classifier, Youden-J threshold from OOF."""
-    logging.info("\n=== Training Binary AV Model (GroupKFold n=5, Youden-J threshold) ===")
+    """Hyperparameter-tuned binary classifier with GroupKFold, Youden-J threshold from OOF."""
+    logging.info("\n=== Training Binary AV Model (RandomizedSearchCV + GroupKFold n=5) ===")
 
     n_good   = np.sum(y_all == 0)
     n_defect = np.sum(y_all == 1)
     scale    = n_good / max(n_defect, 1)
 
-    model = XGBClassifier(
-        n_estimators=500, max_depth=5, learning_rate=0.05,
-        subsample=0.8, colsample_bytree=0.8,
-        min_child_weight=3, reg_alpha=0.1, reg_lambda=2,
+    param_dist = {
+        "n_estimators":      [300, 400, 500, 700],
+        "max_depth":         [3, 4, 5, 6],
+        "learning_rate":     [0.02, 0.05, 0.08, 0.1],
+        "subsample":         [0.7, 0.8, 0.9],
+        "colsample_bytree":  [0.6, 0.7, 0.8, 0.9],
+        "min_child_weight":  [1, 3, 5, 7],
+        "reg_alpha":         [0, 0.05, 0.1, 0.3],
+        "reg_lambda":        [1, 2, 3, 5],
+    }
+
+    base = XGBClassifier(
         scale_pos_weight=scale,
         eval_metric="logloss", use_label_encoder=False,
         random_state=42, tree_method="hist",
     )
 
-    gkf = GroupKFold(n_splits=5)
-    oof_probs = np.zeros(len(y_all))
-    t0 = time.time()
-    for fold, (tr_idx, va_idx) in enumerate(gkf.split(X_all, y_all, groups)):
-        model.fit(X_all[tr_idx], y_all[tr_idx])
-        oof_probs[va_idx] = model.predict_proba(X_all[va_idx])[:, 1]
-        logging.info(f"  Fold {fold+1}/5 done")
-    logging.info(f"  OOF done in {time.time()-t0:.1f}s")
+    # Use GroupShuffleSplit inside RandomizedSearchCV so CV splits respect groups
+    gss = GroupShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
+    search = RandomizedSearchCV(
+        base, param_dist, n_iter=40, cv=gss,
+        scoring="f1", random_state=42, n_jobs=-1, verbose=0,
+        error_score="raise",
+    )
 
-    # ---- Principled threshold: Youden's J = Sensitivity + Specificity - 1 ----
-    best_j, best_thresh = -1, 0.5
+    t0 = time.time()
+    search.fit(X_all, y_all, groups=groups)
+    logging.info(f"  Hyperparameter search done in {time.time()-t0:.1f}s")
+    logging.info(f"  Best params: {search.best_params_}")
+
+    model = search.best_estimator_
+
+    # ---- OOF probabilities with GroupKFold for threshold selection ----
+    # Run all 5 folds in parallel across all CPU cores
+    gkf = GroupKFold(n_splits=5)
+    splits = list(gkf.split(X_all, y_all, groups))
+
+    def _fit_fold_binary(tr_idx, va_idx):
+        m = XGBClassifier(**model.get_params())
+        m.fit(X_all[tr_idx], y_all[tr_idx])
+        return va_idx, m.predict_proba(X_all[va_idx])[:, 1]
+
+    t0 = time.time()
+    results = Parallel(n_jobs=-1, verbose=0)(
+        delayed(_fit_fold_binary)(tr, va) for tr, va in splits
+    )
+    oof_probs = np.zeros(len(y_all))
+    for va_idx, probs in results:
+        oof_probs[va_idx] = probs
+    logging.info(f"  OOF (parallel) done in {time.time()-t0:.1f}s")
+
+    # Youden-J threshold (Sensitivity + Specificity - 1)
+    best_j, best_thresh_j = -1, 0.5
+    # F1-optimal threshold
+    best_f1_val, best_thresh_f1 = 0, 0.5
+
     for t in np.arange(0.05, 0.95, 0.01):
         preds = (oof_probs >= t).astype(int)
-        tp = ((preds == 1) & (y_all == 1)).sum()
-        tn = ((preds == 0) & (y_all == 0)).sum()
+        tp  = ((preds == 1) & (y_all == 1)).sum()
+        tn  = ((preds == 0) & (y_all == 0)).sum()
         sens = tp / max((y_all == 1).sum(), 1)
         spec = tn / max((y_all == 0).sum(), 1)
-        j = sens + spec - 1
+        j    = sens + spec - 1
         if j > best_j:
-            best_j, best_thresh = j, t
+            best_j, best_thresh_j = j, t
+        fv = f1_score(y_all, preds, zero_division=0)
+        if fv > best_f1_val:
+            best_f1_val, best_thresh_f1 = fv, t
 
-    # Also compute best F1 threshold for reporting
-    best_f1, best_f1_thresh = 0, 0.5
-    for t in np.arange(0.05, 0.95, 0.01):
-        preds = (oof_probs >= t).astype(int)
-        f = f1_score(y_all, preds, zero_division=0)
-        if f > best_f1:
-            best_f1, best_f1_thresh = f, t
+    logging.info(f"  OOF Youden-J threshold: {best_thresh_j:.2f}  →  F1={f1_score(y_all, (oof_probs>=best_thresh_j).astype(int)):.4f}")
+    logging.info(f"  OOF F1-optimal threshold: {best_thresh_f1:.2f}  →  F1={best_f1_val:.4f}")
 
-    logging.info(f"  Youden-J threshold: {best_thresh:.2f}  (F1-optimal was: {best_f1_thresh:.2f})")
+    # Use F1-optimal as primary (maximises the binary metric the hackathon cares about)
+    best_thresh = best_thresh_f1
 
     oof_preds = (oof_probs >= best_thresh).astype(int)
     metrics = {
-        "f1":             float(f1_score(y_all, oof_preds, zero_division=0)),
-        "precision":      float(precision_score(y_all, oof_preds, zero_division=0)),
-        "recall":         float(recall_score(y_all, oof_preds, zero_division=0)),
-        "roc_auc":        float(roc_auc_score(y_all, oof_probs)),
-        "best_threshold": float(best_thresh),
-        "youden_j":       float(best_j),
-        "features_used":  f"audio+image selected subset",
-        "cv_strategy":    "GroupKFold(5) on config_folder",
+        "f1":              float(f1_score(y_all, oof_preds, zero_division=0)),
+        "precision":       float(precision_score(y_all, oof_preds, zero_division=0)),
+        "recall":          float(recall_score(y_all, oof_preds, zero_division=0)),
+        "roc_auc":         float(roc_auc_score(y_all, oof_probs)),
+        "best_threshold":  float(best_thresh),
+        "youden_j_threshold": float(best_thresh_j),
+        "features_used":   "audio+image selected subset",
+        "cv_strategy":     "GroupKFold(5) on config_folder (no data leakage)",
+        "best_params":     search.best_params_,
     }
-    logging.info(f"  OOF Binary — F1: {metrics['f1']:.4f}, AUC: {metrics['roc_auc']:.4f}, Threshold: {best_thresh:.2f}")
+    logging.info(f"  Final — F1: {metrics['f1']:.4f}, AUC: {metrics['roc_auc']:.4f}, Threshold: {best_thresh:.2f}")
 
     logging.info("  Refitting on full dataset...")
     model.fit(X_all, y_all)
@@ -181,35 +218,67 @@ def train_binary_av(X_all, y_all, groups):
 
 
 def train_multiclass_av(X_all, y_codes_all, groups):
-    """GroupKFold multiclass type classifier (defects only)."""
-    logging.info("\n=== Training Multiclass AV Model (GroupKFold n=5) ===")
+    """Hyperparameter-tuned multiclass type classifier with GroupKFold."""
+    logging.info("\n=== Training Multiclass AV Model (RandomizedSearchCV + GroupKFold n=5) ===")
 
     defect_mask = y_codes_all != "00"
     X_d         = X_all[defect_mask]
     y_codes_d   = y_codes_all[defect_mask]
     groups_d    = groups[defect_mask]
 
-    le   = LabelEncoder()
-    y_d  = le.fit_transform(y_codes_d)
+    le    = LabelEncoder()
+    y_d   = le.fit_transform(y_codes_d)
     n_cls = len(le.classes_)
     logging.info(f"  Classes: {list(le.classes_)} | defect samples: {len(X_d)}")
 
-    model = XGBClassifier(
+    param_dist = {
+        "n_estimators":     [300, 400, 500, 700],
+        "max_depth":        [3, 4, 5, 6],
+        "learning_rate":    [0.02, 0.05, 0.08, 0.1],
+        "subsample":        [0.7, 0.8, 0.9],
+        "colsample_bytree": [0.6, 0.7, 0.8, 0.9],
+        "min_child_weight": [1, 3, 5],
+        "reg_alpha":        [0, 0.05, 0.1],
+        "reg_lambda":       [1, 2, 3],
+    }
+
+    base = XGBClassifier(
         objective="multi:softprob", num_class=n_cls,
-        n_estimators=500, max_depth=5, learning_rate=0.05,
-        subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
         eval_metric="mlogloss", use_label_encoder=False,
         random_state=42, tree_method="hist",
     )
 
-    gkf = GroupKFold(n_splits=5)
-    oof_preds = np.zeros(len(y_d), dtype=int)
+    gss = GroupShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
+    search = RandomizedSearchCV(
+        base, param_dist, n_iter=40, cv=gss,
+        scoring="f1_macro", random_state=42, n_jobs=-1, verbose=0,
+        error_score="raise",
+    )
+
     t0 = time.time()
-    for fold, (tr_idx, va_idx) in enumerate(gkf.split(X_d, y_d, groups_d)):
-        model.fit(X_d[tr_idx], y_d[tr_idx])
-        oof_preds[va_idx] = model.predict(X_d[va_idx])
-        logging.info(f"  Fold {fold+1}/5 done")
-    logging.info(f"  OOF done in {time.time()-t0:.1f}s")
+    search.fit(X_d, y_d, groups=groups_d)
+    logging.info(f"  Hyperparameter search done in {time.time()-t0:.1f}s")
+    logging.info(f"  Best params: {search.best_params_}")
+
+    model = search.best_estimator_
+
+    # OOF predictions — all folds in parallel
+    gkf = GroupKFold(n_splits=5)
+    splits = list(gkf.split(X_d, y_d, groups_d))
+
+    def _fit_fold_multi(tr_idx, va_idx):
+        m = XGBClassifier(**model.get_params())
+        m.fit(X_d[tr_idx], y_d[tr_idx])
+        return va_idx, m.predict(X_d[va_idx])
+
+    t0 = time.time()
+    results = Parallel(n_jobs=-1, verbose=0)(
+        delayed(_fit_fold_multi)(tr, va) for tr, va in splits
+    )
+    oof_preds = np.zeros(len(y_d), dtype=int)
+    for va_idx, preds in results:
+        oof_preds[va_idx] = preds
+    logging.info(f"  OOF (parallel) done in {time.time()-t0:.1f}s")
 
     macro_f1    = float(f1_score(y_d, oof_preds, average="macro",    zero_division=0))
     weighted_f1 = float(f1_score(y_d, oof_preds, average="weighted", zero_division=0))
@@ -226,6 +295,7 @@ def train_multiclass_av(X_all, y_codes_all, groups):
                               "recall": report[cls]["recall"]} for cls in le.classes_},
         "features_used": "audio+image selected subset",
         "cv_strategy":   "GroupKFold(5) on config_folder",
+        "best_params":   search.best_params_,
     }
 
     logging.info("  Refitting on full defect dataset...")

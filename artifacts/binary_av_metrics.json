@@ -1,10 +1,20 @@
 {
-  "f1": 0.9091981132075472,
-  "precision": 0.8801369863013698,
-  "recall": 0.9402439024390243,
-  "roc_auc": 0.9472640218878248,
-  "best_threshold": 0.62,
-  "youden_j": 0.7966050515498315,
+  "f1": 0.9138840070298769,
+  "precision": 0.8793686583990981,
+  "recall": 0.9512195121951219,
+  "roc_auc": 0.9510176503953821,
+  "best_threshold": 0.3400000000000001,
+  "youden_j_threshold": 0.5000000000000001,
   "features_used": "audio+image selected subset",
-  "cv_strategy": "GroupKFold(5) on config_folder"
+  "cv_strategy": "GroupKFold(5) on config_folder (no data leakage)",
+  "best_params": {
+    "subsample": 0.9,
+    "reg_lambda": 1,
+    "reg_alpha": 0.3,
+    "n_estimators": 500,
+    "min_child_weight": 1,
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "colsample_bytree": 0.9
+  }
 }

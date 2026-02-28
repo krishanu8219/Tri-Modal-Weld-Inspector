@@ -158,10 +158,24 @@ Dashboard runs at `http://localhost:3000` with FastAPI backend at `http://localh
 Built with **Next.js** + **FastAPI**, the dashboard provides:
 
 - **Overview** -- Dataset statistics, label distributions, data quality indicators
-- **Sample Explorer** -- Drill into any sample: audio waveform, video frames, sensor traces
+- **Run Inspector** -- Live inspection of all **115 test samples** with predicted labels, P(Defect) scores, audio waveform analysis, and visual keyframes
+- **Inspection Logs** -- Filterable table of test samples with pass/fail status, prediction codes, and one-click drill-down
 - **Evaluation** -- Binary metrics, confusion matrices, per-class F1 breakdown, ROC curves
 - **Data Models** -- Pipeline architecture visualization, feature importance, fit diagnostics
-- **Data Card** -- Dataset documentation, preprocessing assumptions, limitations
+- **Export & Data Card** -- Dataset documentation, preprocessing assumptions, submission export
+
+---
+
+## Presentation
+
+The `presentation/` folder contains all materials for the hackathon pitch:
+
+| File | Description |
+|---|---|
+| `The-Problem-Deadly-Weld-Defects.pdf` | Slide deck covering the problem, approach, architecture, and results |
+| `Screen Recording *.mov` | Dashboard demo recordings showing live inspection of all 115 test samples -- audio waveforms, visual frames, prediction verdicts, and anomaly detection |
+
+> **Note:** The screen recordings demonstrate the full Run Inspector workflow: selecting a test sample, viewing the model's prediction with confidence score, inspecting the acoustic waveform with anomaly regions highlighted, and reviewing visual keyframes from the weld process.
 
 ---
 
@@ -174,11 +188,12 @@ train_audiovisual.py      # Model training with parallel execution
 run_inference.py          # Test inference & submission generation
 diagnose_fit.py           # Overfitting diagnostics
 requirements.txt          # Python dependencies
-submission.csv            # Latest submission output
+submission.csv            # Latest submission output (115 test samples)
 PITCH_AND_QA.md           # 4-min pitch script & Q&A prep
 DataCard.md               # Dataset documentation
 artifacts/                # Saved models, metrics, feature cache
 next-dashboard/           # Next.js frontend dashboard
+presentation/             # Pitch deck PDF + dashboard demo recordings
 src/                      # Core source modules
 sampleData/               # Sample data for dashboard preview
 ```

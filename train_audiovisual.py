@@ -23,6 +23,7 @@ import pandas as pd
 import joblib
 from joblib import Parallel, delayed
 from sklearn.model_selection import GroupKFold, RandomizedSearchCV, GroupShuffleSplit
+from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import (
     f1_score, precision_score, recall_score, roc_auc_score,
     classification_report
@@ -187,30 +188,64 @@ def train_binary_av(X_all, y_all, groups):
         if fv > best_f1_val:
             best_f1_val, best_thresh_f1 = fv, t
 
-    logging.info(f"  OOF Youden-J threshold: {best_thresh_j:.2f}  →  F1={f1_score(y_all, (oof_probs>=best_thresh_j).astype(int)):.4f}")
+    logging.info(f"  OOF Youden-J threshold:   {best_thresh_j:.2f}  →  F1={f1_score(y_all, (oof_probs>=best_thresh_j).astype(int)):.4f}")
     logging.info(f"  OOF F1-optimal threshold: {best_thresh_f1:.2f}  →  F1={best_f1_val:.4f}")
+    logging.info(f"  Raw OOF prob range: [{oof_probs.min():.3f}, {oof_probs.max():.3f}]  mean={oof_probs.mean():.3f}")
 
-    # Use F1-optimal as primary (maximises the binary metric the hackathon cares about)
-    best_thresh = best_thresh_f1
+    # ---- Isotonic Calibration on OOF probs (training data only) ----
+    # XGBoost pushes probs to extremes; isotonic regression maps them to
+    # a better-calibrated scale using only the held-out OOF batch.
+    calibrator = IsotonicRegression(out_of_bounds='clip')
+    calibrator.fit(oof_probs, y_all)
+    cal_probs = calibrator.predict(oof_probs)
+    logging.info(f"  Calibrated OOF prob range: [{cal_probs.min():.3f}, {cal_probs.max():.3f}]  mean={cal_probs.mean():.3f}")
 
-    oof_preds = (oof_probs >= best_thresh).astype(int)
+    # Re-derive threshold on calibrated probabilities
+    best_f1_cal, best_thresh_cal = 0, 0.5
+    best_j_cal, best_thresh_j_cal = -1, 0.5
+    for t in np.arange(0.05, 0.95, 0.005):
+        preds = (cal_probs >= t).astype(int)
+        tp   = ((preds == 1) & (y_all == 1)).sum()
+        tn   = ((preds == 0) & (y_all == 0)).sum()
+        sens = tp / max((y_all == 1).sum(), 1)
+        spec = tn / max((y_all == 0).sum(), 1)
+        j    = sens + spec - 1
+        if j > best_j_cal:
+            best_j_cal, best_thresh_j_cal = j, t
+        fv = f1_score(y_all, preds, zero_division=0)
+        if fv > best_f1_cal:
+            best_f1_cal, best_thresh_cal = fv, t
+
+    logging.info(f"  Calibrated Youden-J threshold:   {best_thresh_j_cal:.3f}  →  F1={f1_score(y_all, (cal_probs>=best_thresh_j_cal).astype(int)):.4f}")
+    logging.info(f"  Calibrated F1-optimal threshold: {best_thresh_cal:.3f}  →  F1={best_f1_cal:.4f}")
+
+    best_thresh = best_thresh_cal  # use calibrated threshold
+
+    cal_preds = (cal_probs >= best_thresh).astype(int)
     metrics = {
-        "f1":              float(f1_score(y_all, oof_preds, zero_division=0)),
-        "precision":       float(precision_score(y_all, oof_preds, zero_division=0)),
-        "recall":          float(recall_score(y_all, oof_preds, zero_division=0)),
-        "roc_auc":         float(roc_auc_score(y_all, oof_probs)),
-        "best_threshold":  float(best_thresh),
-        "youden_j_threshold": float(best_thresh_j),
-        "features_used":   "audio+image selected subset",
-        "cv_strategy":     "GroupKFold(5) on config_folder (no data leakage)",
-        "best_params":     search.best_params_,
+        "f1":                    float(f1_score(y_all, cal_preds, zero_division=0)),
+        "precision":             float(precision_score(y_all, cal_preds, zero_division=0)),
+        "recall":                float(recall_score(y_all, cal_preds, zero_division=0)),
+        "roc_auc":               float(roc_auc_score(y_all, cal_probs)),
+        "best_threshold":        float(best_thresh),
+        "youden_j_threshold":    float(best_thresh_j_cal),
+        "calibration":           "isotonic regression on OOF probs",
+        "features_used":         "audio+image selected subset",
+        "cv_strategy":           "GroupKFold(5) on config_folder (no data leakage)",
+        "best_params":           {k: (int(v) if isinstance(v, np.integer) else
+                                      float(v) if isinstance(v, np.floating) else v)
+                                  for k, v in search.best_params_.items()},
     }
-    logging.info(f"  Final — F1: {metrics['f1']:.4f}, AUC: {metrics['roc_auc']:.4f}, Threshold: {best_thresh:.2f}")
+    logging.info(f"  Final — F1: {metrics['f1']:.4f}, AUC: {metrics['roc_auc']:.4f}, Threshold: {best_thresh:.3f}")
 
-    logging.info("  Refitting on full dataset...")
+    logging.info("  Refitting model on full dataset...")
     model.fit(X_all, y_all)
+    # Refit calibrator on full-data raw probs
+    full_probs = model.predict_proba(X_all)[:, 1]
+    calibrator.fit(full_probs, y_all)
 
-    joblib.dump(model, os.path.join(ARTIFACTS_DIR, "binary_model_av.joblib"))
+    joblib.dump(model,      os.path.join(ARTIFACTS_DIR, "binary_model_av.joblib"))
+    joblib.dump(calibrator, os.path.join(ARTIFACTS_DIR, "binary_calibrator_av.joblib"))
     with open(os.path.join(ARTIFACTS_DIR, "binary_av_metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 

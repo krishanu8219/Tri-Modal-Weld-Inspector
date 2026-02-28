@@ -1,8 +1,8 @@
 {
-  "binary_f1": 0.9138840070298769,
+  "binary_f1": 0.9143876337693222,
   "type_macro_f1": 0.8681576775127335,
-  "final_score": 0.8955934752230196,
-  "best_threshold": 0.3400000000000001,
+  "final_score": 0.8958956512666868,
+  "best_threshold": 0.4449999999999998,
   "n_features": 79,
   "features": "audio+image selected subset",
   "cv_strategy": "GroupKFold(5) on config_folder"

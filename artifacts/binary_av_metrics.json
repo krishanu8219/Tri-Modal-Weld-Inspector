@@ -1,10 +1,11 @@
 {
-  "f1": 0.9138840070298769,
-  "precision": 0.8793686583990981,
-  "recall": 0.9512195121951219,
-  "roc_auc": 0.9510176503953821,
-  "best_threshold": 0.3400000000000001,
-  "youden_j_threshold": 0.5000000000000001,
+  "f1": 0.9143876337693222,
+  "precision": 0.8921113689095128,
+  "recall": 0.9378048780487804,
+  "roc_auc": 0.9579476827600014,
+  "best_threshold": 0.4449999999999998,
+  "youden_j_threshold": 0.4449999999999998,
+  "calibration": "isotonic regression on OOF probs",
   "features_used": "audio+image selected subset",
   "cv_strategy": "GroupKFold(5) on config_folder (no data leakage)",
   "best_params": {

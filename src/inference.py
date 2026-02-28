@@ -25,6 +25,7 @@ class DefectClassifierPipeline:
         self.le_av = None
         self.has_av_models = False
         self.feature_mask_av = None   # boolean mask for selected features
+        self.calibrator_av = None     # isotonic calibrator for binary probs
         
         self._load_models()
         
@@ -79,6 +80,12 @@ class DefectClassifierPipeline:
                 self.feature_mask_av = np.load(mask_path)
                 logging.info(f"Feature mask loaded: {int(self.feature_mask_av.sum())}/217 features selected")
             
+            # Load isotonic calibrator (saved by train_audiovisual.py)
+            cal_path = os.path.join(self.artifacts_dir, "binary_calibrator_av.joblib")
+            if os.path.exists(cal_path):
+                self.calibrator_av = joblib.load(cal_path)
+                logging.info("Isotonic calibrator loaded")
+            
             self.has_av_models = True
             logging.info("Audio-Visual fallback models loaded (for no-CSV inference)")
                 
@@ -113,9 +120,14 @@ class DefectClassifierPipeline:
             
             features_av = features_av.reshape(1, -1)
             
-            # Binary
+            # Binary — get raw prob, then apply isotonic calibration if available
             bin_probs = self.binary_model_av.predict_proba(features_av)
-            p_defect = float(bin_probs[0, 1]) if bin_probs.shape[1] > 1 else 0.0
+            p_defect_raw = float(bin_probs[0, 1]) if bin_probs.shape[1] > 1 else 0.0
+            
+            if self.calibrator_av is not None:
+                p_defect = float(self.calibrator_av.predict([p_defect_raw])[0])
+            else:
+                p_defect = p_defect_raw
             
             if p_defect < self.binary_threshold_av:
                 return {"pred_label_code": "00", "p_defect": p_defect, "type_confidence": None}

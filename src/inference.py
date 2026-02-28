@@ -63,9 +63,15 @@ class DefectClassifierPipeline:
                 self.le_av = joblib.load(av_le_path)
             else:
                 self.le_av = self.le
+            
             if os.path.exists(av_metrics_path):
-                with open(av_metrics_path, "r") as f:
-                    self.binary_threshold_av = json.load(f).get("best_threshold", 0.5)
+                try:
+                    with open(av_metrics_path, "r") as f:
+                        av_metrics = json.load(f)
+                        self.binary_threshold_av = av_metrics.get("best_threshold", 0.5)
+                except Exception as e:
+                    logging.warning(f"Could not load AV threshold from {av_metrics_path}: {e}")
+            
             self.has_av_models = True
             logging.info("Audio-Visual fallback models loaded (for no-CSV inference)")
                 
@@ -110,18 +116,18 @@ class DefectClassifierPipeline:
             pred_label_code = None
             best_idx = None
             for idx in sorted_indices:
-                if classes[idx] != "00":
-                    pred_label_code = classes[idx]
+                if str(classes[idx]).zfill(2) != "00":
+                    pred_label_code = str(classes[idx]).zfill(2)
                     best_idx = idx
                     break
             
             if pred_label_code is None:
-                pred_label_code = classes[sorted_indices[0]]
+                pred_label_code = str(classes[sorted_indices[0]]).zfill(2)
                 best_idx = sorted_indices[0]
-            
+                
             return {
-                "pred_label_code": str(pred_label_code).zfill(2),
-                "p_defect": float(p_defect),
+                "pred_label_code": pred_label_code,
+                "p_defect": p_defect,
                 "type_confidence": float(multi_probs[0, best_idx])
             }
         

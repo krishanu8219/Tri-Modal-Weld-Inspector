@@ -107,8 +107,13 @@ class DefectClassifierPipeline:
         if self.has_av_models:
             features_av = np.concatenate([audio_f, image_f])
             
-            # Pad/truncate to 264 dims first (physics-based features)
-            expected_dim = 264  # 136 audio + 128 image
+            # Pad/truncate to expected dims (physics-based features)
+            # The feature mask was trained with a specific input dim —
+            # use the mask length to infer the expected raw feature count.
+            if self.feature_mask_av is not None:
+                expected_dim = len(self.feature_mask_av)
+            else:
+                expected_dim = 308  # 180 audio + 128 image (current)
             if len(features_av) != expected_dim:
                 if len(features_av) < expected_dim:
                     features_av = np.concatenate([features_av, np.zeros(expected_dim - len(features_av))])
@@ -133,22 +138,27 @@ class DefectClassifierPipeline:
             if p_defect < self.binary_threshold_av:
                 return {"pred_label_code": "00", "p_defect": p_defect, "type_confidence": None}
             
-            # Multiclass
+            # Multiclass (now 7-class: includes "00" to override binary FPs)
             multi_probs = self.multiclass_model_av.predict_proba(features_av)
             classes = self.le_av.inverse_transform(self.multiclass_model_av.classes_)
             sorted_indices = np.argsort(multi_probs[0])[::-1]
             
-            pred_label_code = None
-            best_idx = None
-            for idx in sorted_indices:
-                if str(classes[idx]).zfill(2) != "00":
-                    pred_label_code = str(classes[idx]).zfill(2)
-                    best_idx = idx
-                    break
+            # Check if the 7-class model predicts "00" (good weld)
+            # If so, override the binary decision — the multiclass disagrees
+            top_class = str(classes[sorted_indices[0]]).zfill(2)
+            top_conf  = float(multi_probs[0, sorted_indices[0]])
             
-            if pred_label_code is None:
-                pred_label_code = str(classes[sorted_indices[0]]).zfill(2)
-                best_idx = sorted_indices[0]
+            if top_class == "00":
+                # Multiclass model says this is a good weld despite binary flagging it
+                return {
+                    "pred_label_code": "00",
+                    "p_defect": p_defect * (1 - top_conf),  # reduce p_defect by class-00 confidence
+                    "type_confidence": top_conf
+                }
+            
+            # Find the top non-00 class prediction
+            pred_label_code = top_class
+            best_idx = sorted_indices[0]
                 
             return {
                 "pred_label_code": pred_label_code,

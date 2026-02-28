@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 import joblib
 from joblib import Parallel, delayed
+from concurrent.futures import ThreadPoolExecutor
 from sklearn.model_selection import GroupKFold, RandomizedSearchCV, GroupShuffleSplit
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import (
@@ -40,9 +41,9 @@ CACHE_PATH    = os.path.join(ARTIFACTS_DIR, "feature_cache.npz")
 # ------------------------------------------------------------------ #
 # Physics-based feature dims (must match audio_features.py /          #
 # image_features.py)                                                  #
-N_AUDIO = 136    # AUDIO_FEAT_DIM in audio_features.py
+N_AUDIO = 180    # AUDIO_FEAT_DIM in audio_features.py (was 136, now 180)
 N_IMAGE = 128    # IMAGE_FEAT_DIM in image_features.py
-N_TOTAL = N_AUDIO + N_IMAGE   # 264
+N_TOTAL = N_AUDIO + N_IMAGE   # 308
 # ------------------------------------------------------------------ #
 # How many top features to keep (by cumulative importance).           #
 CUMULATIVE_IMPORTANCE_THRESHOLD = 0.80
@@ -106,8 +107,8 @@ def select_features(X_all, y_bin_all, groups):
     mask = np.zeros(X_all.shape[1], dtype=bool)
     mask[selected_idx] = True
 
-    n_audio_kept = int(np.sum(mask[:120]))
-    n_image_kept = int(np.sum(mask[120:]))
+    n_audio_kept = int(np.sum(mask[:N_AUDIO]))
+    n_image_kept = int(np.sum(mask[N_AUDIO:]))
     logging.info(f"  Keeping {n_keep}/{X_all.shape[1]} features "
                  f"(audio={n_audio_kept}, image={n_image_kept}) "
                  f"covering {100*cum_imp[n_keep-1]:.1f}% of importance")
@@ -116,23 +117,23 @@ def select_features(X_all, y_bin_all, groups):
     return mask
 
 
-def train_binary_av(X_all, y_all, groups):
+def train_binary_av(X_all, y_all, groups, n_jobs=-1):
     """Hyperparameter-tuned binary classifier with GroupKFold, Youden-J threshold from OOF."""
-    logging.info("\n=== Training Binary AV Model (RandomizedSearchCV + GroupKFold n=5) ===")
+    logging.info(f"\n=== Training Binary AV Model (RandomizedSearchCV + GroupKFold n=5, n_jobs={n_jobs}) ===")
 
     n_good   = np.sum(y_all == 0)
     n_defect = np.sum(y_all == 1)
     scale    = n_good / max(n_defect, 1)
 
     param_dist = {
-        "n_estimators":      [300, 400, 500, 700],
-        "max_depth":         [3, 4, 5, 6],
-        "learning_rate":     [0.02, 0.05, 0.08, 0.1],
-        "subsample":         [0.7, 0.8, 0.9],
-        "colsample_bytree":  [0.6, 0.7, 0.8, 0.9],
-        "min_child_weight":  [1, 3, 5, 7],
-        "reg_alpha":         [0, 0.05, 0.1, 0.3],
-        "reg_lambda":        [1, 2, 3, 5],
+        "n_estimators":      [300, 400, 500, 700, 1000],
+        "max_depth":         [2, 3, 4, 5, 6],
+        "learning_rate":     [0.01, 0.02, 0.05, 0.08, 0.1],
+        "subsample":         [0.6, 0.7, 0.8, 0.9],
+        "colsample_bytree":  [0.5, 0.6, 0.7, 0.8, 0.9],
+        "min_child_weight":  [1, 3, 5, 7, 10],
+        "reg_alpha":         [0, 0.05, 0.1, 0.3, 0.5, 1.0],
+        "reg_lambda":        [1, 2, 3, 5, 8, 10],
     }
 
     base = XGBClassifier(
@@ -144,14 +145,14 @@ def train_binary_av(X_all, y_all, groups):
     # Use GroupShuffleSplit inside RandomizedSearchCV so CV splits respect groups
     gss = GroupShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
     search = RandomizedSearchCV(
-        base, param_dist, n_iter=40, cv=gss,
-        scoring="f1", random_state=42, n_jobs=-1, verbose=0,
+        base, param_dist, n_iter=60, cv=gss,
+        scoring="f1", random_state=42, n_jobs=n_jobs, verbose=0,
         error_score="raise",
     )
 
     t0 = time.time()
     search.fit(X_all, y_all, groups=groups)
-    logging.info(f"  Hyperparameter search done in {time.time()-t0:.1f}s")
+    logging.info(f"  Hyperparameter search done in {time.time()-t0:.1f}s  (60 iterations)")
     logging.info(f"  Best params: {search.best_params_}")
 
     model = search.best_estimator_
@@ -167,7 +168,7 @@ def train_binary_av(X_all, y_all, groups):
         return va_idx, m.predict_proba(X_all[va_idx])[:, 1]
 
     t0 = time.time()
-    results = Parallel(n_jobs=-1, verbose=0)(
+    results = Parallel(n_jobs=n_jobs, verbose=0)(
         delayed(_fit_fold_binary)(tr, va) for tr, va in splits
     )
     oof_probs = np.zeros(len(y_all))
@@ -245,9 +246,11 @@ def train_binary_av(X_all, y_all, groups):
 
     logging.info("  Refitting model on full dataset...")
     model.fit(X_all, y_all)
-    # Refit calibrator on full-data raw probs
-    full_probs = model.predict_proba(X_all)[:, 1]
-    calibrator.fit(full_probs, y_all)
+    # IMPORTANT: Keep the OOF-fitted calibrator — do NOT refit on full data.
+    # Refitting on full-data probs creates an overly aggressive step function
+    # because the model perfectly fits training data, producing extreme probs.
+    # The OOF calibrator better reflects behavior on unseen data.
+    # (Previously this was: calibrator.fit(full_probs, y_all) — overfitting bug)
 
     joblib.dump(model,      os.path.join(ARTIFACTS_DIR, "binary_model_av.joblib"))
     joblib.dump(calibrator, os.path.join(ARTIFACTS_DIR, "binary_calibrator_av.joblib"))
@@ -257,29 +260,37 @@ def train_binary_av(X_all, y_all, groups):
     return model, best_thresh, metrics
 
 
-def train_multiclass_av(X_all, y_codes_all, groups):
-    """Hyperparameter-tuned multiclass type classifier with GroupKFold."""
-    logging.info("\n=== Training Multiclass AV Model (RandomizedSearchCV + GroupKFold n=5) ===")
+def train_multiclass_av(X_all, y_codes_all, groups, n_jobs=-1):
+    """Hyperparameter-tuned multiclass type classifier with GroupKFold.
+    
+    CHANGE: Trains on ALL 7 classes (including '00') instead of defect-only.
+    This allows the multiclass model to override binary false positives:
+    if binary says 'defect' but 7-class says '00', we classify as good weld.
+    """
+    logging.info(f"\n=== Training Multiclass AV Model (ALL 7 classes, GroupKFold n=5, n_jobs={n_jobs}) ===")
 
-    defect_mask = y_codes_all != "00"
-    X_d         = X_all[defect_mask]
-    y_codes_d   = y_codes_all[defect_mask]
-    groups_d    = groups[defect_mask]
+    # Use ALL data, not just defects
+    X_d         = X_all
+    y_codes_d   = y_codes_all
+    groups_d    = groups
 
     le    = LabelEncoder()
     y_d   = le.fit_transform(y_codes_d)
     n_cls = len(le.classes_)
-    logging.info(f"  Classes: {list(le.classes_)} | defect samples: {len(X_d)}")
+    logging.info(f"  Classes: {list(le.classes_)} | total samples: {len(X_d)}")
+    for cls in le.classes_:
+        count = (y_codes_d == cls).sum()
+        logging.info(f"    {cls}: {count} samples")
 
     param_dist = {
-        "n_estimators":     [300, 400, 500, 700],
-        "max_depth":        [3, 4, 5, 6],
-        "learning_rate":    [0.02, 0.05, 0.08, 0.1],
-        "subsample":        [0.7, 0.8, 0.9],
-        "colsample_bytree": [0.6, 0.7, 0.8, 0.9],
-        "min_child_weight": [1, 3, 5],
-        "reg_alpha":        [0, 0.05, 0.1],
-        "reg_lambda":       [1, 2, 3],
+        "n_estimators":     [300, 400, 500, 700, 1000],
+        "max_depth":        [2, 3, 4, 5, 6],
+        "learning_rate":    [0.01, 0.02, 0.05, 0.08, 0.1],
+        "subsample":        [0.6, 0.7, 0.8, 0.9],
+        "colsample_bytree": [0.5, 0.6, 0.7, 0.8, 0.9],
+        "min_child_weight": [1, 3, 5, 7],
+        "reg_alpha":        [0, 0.05, 0.1, 0.3, 0.5],
+        "reg_lambda":       [1, 2, 3, 5, 8],
     }
 
     base = XGBClassifier(
@@ -290,8 +301,8 @@ def train_multiclass_av(X_all, y_codes_all, groups):
 
     gss = GroupShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
     search = RandomizedSearchCV(
-        base, param_dist, n_iter=40, cv=gss,
-        scoring="f1_macro", random_state=42, n_jobs=-1, verbose=0,
+        base, param_dist, n_iter=60, cv=gss,
+        scoring="f1_macro", random_state=42, n_jobs=n_jobs, verbose=0,
         error_score="raise",
     )
 
@@ -312,7 +323,7 @@ def train_multiclass_av(X_all, y_codes_all, groups):
         return va_idx, m.predict(X_d[va_idx])
 
     t0 = time.time()
-    results = Parallel(n_jobs=-1, verbose=0)(
+    results = Parallel(n_jobs=n_jobs, verbose=0)(
         delayed(_fit_fold_multi)(tr, va) for tr, va in splits
     )
     oof_preds = np.zeros(len(y_d), dtype=int)
@@ -362,9 +373,18 @@ def main():
     X_sel = X_all[:, mask]
     logging.info(f"  Using {mask.sum()} features for final training")
 
-    # ---- Step 2: Train models ----
-    bin_model,   threshold,  bin_metrics   = train_binary_av(X_sel, y_bin_all,  groups)
-    multi_model, le,         multi_metrics = train_multiclass_av(X_sel, y_code_all, groups)
+    # ---- Step 2: Train models IN PARALLEL ----
+    n_cores = os.cpu_count() or 4
+    half_cores = max(1, n_cores // 2)
+    logging.info(f"\n{'='*60}")
+    logging.info(f"  Training Binary + Multiclass in PARALLEL ({half_cores} cores each, {n_cores} total)")
+    logging.info(f"{'='*60}")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        bin_future   = executor.submit(train_binary_av,     X_sel, y_bin_all,  groups, n_jobs=half_cores)
+        multi_future = executor.submit(train_multiclass_av, X_sel, y_code_all, groups, n_jobs=half_cores)
+        bin_model,   threshold,  bin_metrics   = bin_future.result()
+        multi_model, le,         multi_metrics = multi_future.result()
 
     binary_f1     = bin_metrics["f1"]
     type_macro_f1 = multi_metrics["macro_f1"]
@@ -372,11 +392,11 @@ def main():
 
     logging.info("\n" + "=" * 60)
     logging.info("  RESULTS (GroupKFold OOF, feature-selected)")
-    logging.info(f"  Features:        {int(mask.sum())} / 217")
+    logging.info(f"  Features:        {int(mask.sum())} / {X_all.shape[1]}")
     logging.info(f"  Binary F1:       {binary_f1:.4f}")
     logging.info(f"  Type Macro F1:   {type_macro_f1:.4f}")
     logging.info(f"  Final Score:     {final_score:.4f} ({final_score*100:.1f}%)")
-    logging.info(f"  Binary Threshold:{threshold:.2f}  (Youden-J from CV)")
+    logging.info(f"  Binary Threshold:{threshold:.3f}")
     logging.info("=" * 60)
 
     with open(os.path.join(ARTIFACTS_DIR, "pipeline_av_metrics.json"), "w") as f:
@@ -388,6 +408,7 @@ def main():
             "n_features":     int(mask.sum()),
             "features":       "audio+image selected subset",
             "cv_strategy":    "GroupKFold(5) on config_folder",
+            "training":       f"parallel binary+multiclass ({half_cores} cores each)",
         }, f, indent=2)
 
 

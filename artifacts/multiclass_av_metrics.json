@@ -1,48 +1,53 @@
 {
-  "macro_f1": 0.8911270186970417,
-  "weighted_f1": 0.8736458292744955,
+  "macro_f1": 0.8192931339859504,
+  "weighted_f1": 0.8201361662402379,
   "per_class": {
+    "00": {
+      "f1": 0.8604336043360433,
+      "precision": 0.8523489932885906,
+      "recall": 0.8686730506155951
+    },
     "01": {
-      "f1": 0.8434622467771639,
-      "precision": 0.8063380281690141,
-      "recall": 0.8841698841698842
+      "f1": 0.762962962962963,
+      "precision": 0.7330960854092526,
+      "recall": 0.7953667953667953
     },
     "02": {
-      "f1": 0.8085106382978723,
-      "precision": 0.83125,
-      "recall": 0.7869822485207101
+      "f1": 0.7430555555555556,
+      "precision": 0.8991596638655462,
+      "recall": 0.6331360946745562
     },
     "06": {
-      "f1": 0.9673202614379085,
-      "precision": 1.0,
-      "recall": 0.9367088607594937
+      "f1": 0.9333333333333333,
+      "precision": 0.9859154929577465,
+      "recall": 0.8860759493670886
     },
     "07": {
-      "f1": 0.9155844155844156,
-      "precision": 0.94,
-      "recall": 0.8924050632911392
+      "f1": 0.709480122324159,
+      "precision": 0.6863905325443787,
+      "recall": 0.7341772151898734
     },
     "08": {
-      "f1": 0.864516129032258,
-      "precision": 0.8933333333333333,
-      "recall": 0.8375
+      "f1": 0.9210526315789473,
+      "precision": 0.9722222222222222,
+      "recall": 0.875
     },
     "11": {
-      "f1": 0.9473684210526315,
-      "precision": 0.935064935064935,
-      "recall": 0.96
+      "f1": 0.8047337278106509,
+      "precision": 0.723404255319149,
+      "recall": 0.9066666666666666
     }
   },
   "features_used": "audio+image selected subset",
   "cv_strategy": "GroupKFold(5) on config_folder",
   "best_params": {
-    "subsample": 0.7,
-    "reg_lambda": 1,
+    "subsample": 0.8,
+    "reg_lambda": 2,
     "reg_alpha": 0,
-    "n_estimators": 500,
-    "min_child_weight": 1,
-    "max_depth": 6,
-    "learning_rate": 0.02,
-    "colsample_bytree": 0.8
+    "n_estimators": 400,
+    "min_child_weight": 7,
+    "max_depth": 2,
+    "learning_rate": 0.1,
+    "colsample_bytree": 0.5
   }
 }

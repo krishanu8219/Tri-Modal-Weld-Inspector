@@ -15,7 +15,7 @@ Instead we use: sub-band energy RATIOS, temporal VARIANCE, spectral
 ENTROPY (disorder = defect), kurtosis (impulsive events), and
 differential features (rate of change = arc instability).
 
-Output: 136-dimensional vector (fully documented inline)
+Output: 180-dimensional vector (fully documented inline)
 """
 
 import os
@@ -25,7 +25,7 @@ import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-AUDIO_FEAT_DIM = 136   # documented below
+AUDIO_FEAT_DIM = 180   # documented below (136 original + 44 new)
 
 
 def _safe(arr):
@@ -50,8 +50,15 @@ def extract_audio_features(flac_path):
     J. Band energy RATIOS          (6 pair ratios × 4    = 24 dims)
     K. Global percentile contrasts (4 dims               =  4 dims)
     L. Harmonic-to-noise ratio     (4 stats              =  4 dims)
+    M. MFCC standard deviations    (13 coefficients      = 13 dims)
+    N. MFCC delta std deviations   (13 coefficients      = 13 dims)
+    O. Spectral centroid           (4 stats              =  4 dims)
+    P. Spectral bandwidth          (4 stats              =  4 dims)
+    Q. Spectral rolloff            (4 stats              =  4 dims)
+    R. Spectral flatness           (4 stats              =  4 dims)
+    S. Temporal segmentation       (start/end ratio      =  2 dims)
     ──────────────────────────────────────────
-    Total: 48+4+8+4+4+12+12+4+4+24+4+4 = 132 … padded to 136
+    Total: 132 + 4 + 13 + 13 + 4 + 4 + 4 + 4 + 2 = 180 (padded to 180)
     """
     if not os.path.exists(flac_path):
         return np.zeros(AUDIO_FEAT_DIM)
@@ -193,6 +200,51 @@ def extract_audio_features(flac_path):
                       float(np.log1p(hnr)),
                       float(np.sqrt(np.mean(y_perc ** 2))),
                       float(np.sqrt(np.mean(y_harm ** 2)))])
+
+        # ─── M. MFCC standard deviations (13) ──────────────────────────────
+        # MFCC means encode background/config; stds encode temporal
+        # variability of spectral envelope = arc instability indicator
+        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, hop_length=hop)
+        mfcc_stds = np.std(mfccs, axis=1)  # (13,) — variability per coefficient
+        feats.extend(mfcc_stds.tolist())   # 13 dims
+
+        # ─── N. MFCC delta standard deviations (13) ────────────────────────
+        # Rate of change of spectral envelope captures transient defect events
+        mfcc_delta = librosa.feature.delta(mfccs)
+        mfcc_delta_stds = np.std(mfcc_delta, axis=1)  # (13,)
+        feats.extend(mfcc_delta_stds.tolist())   # 13 dims
+
+        # ─── O. Spectral centroid stats (4) ─────────────────────────────────
+        # Centre of mass of the spectrum — shifts with arc temperature/defect
+        spec_cent = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop)[0]
+        feats.extend(stat4(spec_cent))   # 4 dims
+
+        # ─── P. Spectral bandwidth stats (4) ────────────────────────────────
+        # Width of spectral energy — defects broaden/narrow the spectrum
+        spec_bw = librosa.feature.spectral_bandwidth(y=y, sr=sr, hop_length=hop)[0]
+        feats.extend(stat4(spec_bw))   # 4 dims
+
+        # ─── Q. Spectral rolloff stats (4) ──────────────────────────────────
+        # Frequency below which 85% of energy lies — high-freq defects shift this up
+        spec_ro = librosa.feature.spectral_rolloff(y=y, sr=sr, hop_length=hop, roll_percent=0.85)[0]
+        feats.extend(stat4(spec_ro))   # 4 dims
+
+        # ─── R. Spectral flatness stats (4) ─────────────────────────────────
+        # Flatness ≈ noise-likeness. Defects create more noise-like spectra.
+        spec_flat = librosa.feature.spectral_flatness(y=y, hop_length=hop)[0]
+        feats.extend(stat4(spec_flat))   # 4 dims
+
+        # ─── S. Temporal MFCC segmentation (2) ─────────────────────────────
+        # Compare start vs end of weld — crater cracks happen at the end
+        n_frames = mfccs.shape[1]
+        if n_frames >= 6:
+            third = n_frames // 3
+            start_energy = np.mean(np.abs(mfccs[:, :third]))
+            end_energy   = np.mean(np.abs(mfccs[:, -third:]))
+            feats.append(float(end_energy / (start_energy + 1e-9)))  # end/start ratio
+            feats.append(float(np.abs(end_energy - start_energy)))    # absolute diff
+        else:
+            feats.extend([1.0, 0.0])   # 2 dims
 
         out = _safe(np.array(feats, dtype=np.float32))
 

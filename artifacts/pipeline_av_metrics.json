@@ -1,9 +1,10 @@
 {
-  "binary_f1": 0.8943089430894309,
-  "type_macro_f1": 0.8911270186970417,
-  "final_score": 0.8930361733324752,
-  "best_threshold": 0.4299999999999998,
-  "n_features": 79,
+  "binary_f1": 0.9022820362785254,
+  "type_macro_f1": 0.8192931339859504,
+  "final_score": 0.8690864753614954,
+  "best_threshold": 0.4549999999999998,
+  "n_features": 93,
   "features": "audio+image selected subset",
-  "cv_strategy": "GroupKFold(5) on config_folder"
+  "cv_strategy": "GroupKFold(5) on config_folder",
+  "training": "parallel binary+multiclass (4 cores each)"
 }

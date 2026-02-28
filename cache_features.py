@@ -23,16 +23,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 def extract_one(args):
     """Extract features for a single run (worker function)."""
     idx, flac_path, run_dir, label_code = args
+    from src.audio_features import extract_audio_features, AUDIO_FEAT_DIM
+    from src.image_features import extract_image_features, IMAGE_FEAT_DIM
     try:
-        from src.audio_features import extract_audio_features, AUDIO_FEAT_DIM
-        from src.image_features import extract_image_features, IMAGE_FEAT_DIM
-        
         audio_f = extract_audio_features(flac_path)
         image_f = extract_image_features(run_dir)
-        
         return idx, audio_f, image_f, None
     except Exception as e:
-        return idx, np.zeros(136), np.zeros(128), str(e)
+        return idx, np.zeros(AUDIO_FEAT_DIM), np.zeros(IMAGE_FEAT_DIM), str(e)
 
 
 def cache_split(split_csv, split_name, n_workers=None):
@@ -53,8 +51,10 @@ def cache_split(split_csv, split_name, n_workers=None):
     
     # Run in parallel
     t0 = time.time()
-    audio_arr = np.zeros((n, 136))
-    image_arr = np.zeros((n, 128))
+    from src.audio_features import AUDIO_FEAT_DIM
+    from src.image_features import IMAGE_FEAT_DIM
+    audio_arr = np.zeros((n, AUDIO_FEAT_DIM))
+    image_arr = np.zeros((n, IMAGE_FEAT_DIM))
     errors = 0
     
     with Pool(n_workers) as pool:

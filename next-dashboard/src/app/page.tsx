@@ -858,11 +858,12 @@ export default function Dashboard() {
                 <h3>🎯 Pipeline Configuration</h3>
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8, padding: '0.5rem 0' }}>
-                <p>• <strong>Architecture:</strong> Chained XGBoost (Binary → Multi-class)</p>
-                <p>• <strong>Features:</strong> Sensor + Audio + Image (Late Fusion)</p>
-                <p>• <strong>Threshold:</strong> {metrics?.pipeline?.best_pipeline_threshold?.toFixed(3) || 'N/A'} (optimized on FinalScore)</p>
-                <p>• <strong>Calibration:</strong> CalibratedClassifierCV (Sigmoid)</p>
-                <p>• <strong>Test Samples:</strong> {metrics?.pipeline?.total_test_samples || 115}</p>
+                <p>• <strong>Architecture:</strong> Chained XGBoost (Binary → 7-class Multi-class)</p>
+                <p>• <strong>Features:</strong> Audio (180) + Image (128) — Physics-Based Fusion</p>
+                <p>• <strong>Threshold:</strong> {metrics?.pipeline?.best_threshold?.toFixed(3) || 'N/A'} (Youden-J optimized)</p>
+                <p>• <strong>Calibration:</strong> Isotonic Regression on OOF probabilities</p>
+                <p>• <strong>Training:</strong> {metrics?.pipeline?.training || 'Parallel binary + multiclass'}</p>
+                <p>• <strong>Selected Features:</strong> {metrics?.pipeline?.n_features || 93} (from 308 extracted)</p>
               </div>
             </div>
             <div className={`${styles.chartCard} glass`}>
@@ -1165,8 +1166,8 @@ export default function Dashboard() {
               </div>
               <div className={styles.statContent}>
                 <p className={styles.statLabel}>Feature Fusion</p>
-                <h3 className={styles.statValue} style={{ fontSize: '1.1rem' }}>Late Fusion</h3>
-                <p className={styles.statTrend} style={{ color: 'var(--text-muted)' }}>Sensor + Audio + Vision</p>
+                <h3 className={styles.statValue} style={{ fontSize: '1.1rem' }}>Physics-Based</h3>
+                <p className={styles.statTrend} style={{ color: 'var(--text-muted)' }}>Audio (180) + Vision (128)</p>
               </div>
             </div>
             <div className={`${styles.statCard} glass`}>
@@ -1175,8 +1176,8 @@ export default function Dashboard() {
               </div>
               <div className={styles.statContent}>
                 <p className={styles.statLabel}>Optimal Threshold</p>
-                <h3 className={styles.statValue}>{metrics?.pipeline?.best_pipeline_threshold?.toFixed(3) || 'N/A'}</h3>
-                <p className={styles.statTrend} style={{ color: 'var(--success)' }}>Tuned on FinalScore</p>
+                <h3 className={styles.statValue}>{metrics?.pipeline?.best_threshold?.toFixed(3) || 'N/A'}</h3>
+                <p className={styles.statTrend} style={{ color: 'var(--success)' }}>Youden-J optimized</p>
               </div>
             </div>
           </div>
@@ -1269,40 +1270,41 @@ export default function Dashboard() {
               <h3>🧮 Feature Engineering Pipeline</h3>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-              <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)', borderTop: '3px solid #3b82f6' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                  <Activity size={18} color="#3b82f6" />
-                  <span style={{ fontWeight: 600 }}>Sensor Features</span>
-                </div>
-                <ul style={{ paddingLeft: '1.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-                  <li>Global aggregates (mean, std, percentiles)</li>
-                  <li>IQR, range, first-diff stats</li>
-                  <li>Tail-end statistics</li>
-                  <li>Current, Voltage, Feed, Pressure</li>
-                </ul>
-              </div>
               <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)', borderTop: '3px solid #8b5cf6' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
                   <Volume2 size={18} color="#8b5cf6" />
-                  <span style={{ fontWeight: 600 }}>Audio Features</span>
+                  <span style={{ fontWeight: 600 }}>Audio Features (180)</span>
                 </div>
                 <ul style={{ paddingLeft: '1.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-                  <li>13 MFCCs + delta coefficients</li>
-                  <li>Spectral centroid / rolloff</li>
-                  <li>Zero-crossing rate (ZCR)</li>
-                  <li>RMS energy envelope</li>
+                  <li>13 MFCCs + std deviations + delta/delta-delta</li>
+                  <li>Sub-band energy ratios (config-invariant)</li>
+                  <li>Spectral entropy, centroid, rolloff, bandwidth</li>
+                  <li>ZCR, RMS energy, spectral contrast, flatness</li>
+                  <li>Temporal pooling (mean, std, percentiles)</li>
                 </ul>
               </div>
               <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)', borderTop: '3px solid #ec4899' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
                   <ImageIcon size={18} color="#ec4899" />
-                  <span style={{ fontWeight: 600 }}>Vision Features</span>
+                  <span style={{ fontWeight: 600 }}>Vision Features (128)</span>
                 </div>
                 <ul style={{ paddingLeft: '1.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-                  <li>Color histograms (32 bins × 3 ch)</li>
-                  <li>Canny edge density</li>
-                  <li>Keyframe extraction from AVI</li>
-                  <li>OpenCV preprocessing</li>
+                  <li>Bead geometry (width, centre brightness)</li>
+                  <li>Surface texture (GLCM, Laplacian variance)</li>
+                  <li>Temporal consistency (frame differencing)</li>
+                  <li>Keyframe extraction from AVI via OpenCV</li>
+                </ul>
+              </div>
+              <div style={{ padding: '1.25rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)', borderTop: '3px solid #3b82f6' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  <Activity size={18} color="#3b82f6" />
+                  <span style={{ fontWeight: 600 }}>Feature Selection</span>
+                </div>
+                <ul style={{ paddingLeft: '1.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+                  <li>308 raw features extracted per sample</li>
+                  <li>93 selected via 2-pass importance ranking</li>
+                  <li>60-iteration RandomizedSearchCV</li>
+                  <li>GroupKFold(5) on config_folder</li>
                 </ul>
               </div>
             </div>

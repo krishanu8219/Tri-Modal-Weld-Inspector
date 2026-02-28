@@ -1,280 +1,209 @@
-# Dataset Description
+# Tri-Modal Weld Inspector — AI-Powered Weld Defect Detection
 
-## Overview
+> **Team AI-Beats** | Therness Hackathon 2025
 
-- The dataset is organized into three roots:
-- `good_weld`: labeled non-defect reference runs (`750` runs in `43` configuration folders).
-- `defect_data_weld`: labeled defect runs (`1580` runs in `80` configuration folders).
-- `test_data`: anonymized evaluation set (`90` samples named `sample_0001` ... `sample_0090`).
-- Training-available labeled pool (`good_weld` + `defect_data_weld`) contains `2330` runs.
-- Each run/sample is multimodal and typically includes:
-- one sensor CSV, one FLAC audio file, one AVI video file
+An end-to-end machine learning pipeline for automated weld defect detection and classification using audio and visual data from industrial welding processes.
 
-## Weld Configuration Metadata
+---
 
-- Weld setup/context is encoded in labeled folder names (for example: joint type such as `butt` or `plane_plate`, material tags such as `Fe410` or `BSK46`, and date-like tokens).
-- Run IDs follow a pattern like `04-03-23-0010-11`, where the final two-digit suffix (`11`) is the defect/quality code.
-- For fair hackathon evaluation, `test_data` has anonymized folder names (`sample_XXXX`) and neutral filenames (`sensor.csv`, `weld.flac`, `weld.avi`) to reduce label leakage.
-- Ground-truth linkage for evaluation is kept separately in `test_data_ground_truth.csv`.
+## Results
 
-## Labels and Defect Definitions
+| Metric | Score |
+|---|---|
+| **Final Score** | **0.869** |
+| Binary F1 | 0.902 |
+| Binary Precision | 0.867 |
+| Binary Recall | 0.940 |
+| ROC AUC | 0.934 |
+| Type Macro F1 | 0.819 |
 
-| Code | Label | Practical definition | Train pool count (`good_weld`+`defect_data_weld`) |
-|---|---|---|---:|
-| `00` | `good_weld` | Acceptable weld (no target defect) | 750 |
-| `01` | `excessive_penetration` | Over-penetration through joint root | 479 |
-| `02` | `burn_through` | Severe over-penetration causing burn-through/hole | 317 |
-| `06` | `overlap` | Weld metal overlap without proper fusion at toe/root region | 155 |
-| `07` | `lack_of_fusion` | Incomplete fusion between weld metal and base material | 320 |
-| `08` | `excessive_convexity` | Excessively convex weld bead profile | 159 |
-| `11` | `crater_cracks` | Cracks near weld crater/termination zone | 150 |
+*Scoring formula: `FinalScore = 0.6 x Binary_F1 + 0.4 x Type_MacroF1`*
 
-## Folder Structure
+### Per-Class Defect Type Performance (OOF)
 
-```text
-good_weld/
-  <configuration_folder>/
-    <run_id>/
-      <run_id>.csv
-      <run_id>.flac
-      <run_id>.avi
-      images/*.jpg
+| Code | Defect Type | F1 |
+|---|---|---|
+| 00 | Good weld | 0.860 |
+| 01 | Excessive penetration | 0.763 |
+| 02 | Burn through | 0.743 |
+| 06 | Overlap | 0.933 |
+| 07 | Lack of fusion | 0.709 |
+| 08 | Excessive convexity | 0.921 |
+| 11 | Crater cracks | 0.805 |
 
-defect_data_weld/
-  <defect_configuration_folder>/
-    <run_id>/
-      <run_id>.csv
-      <run_id>.flac
-      <run_id>.avi
-      images/*.jpg
+---
 
-test_data/
-  sample_0001/
-    sensor.csv
-    weld.flac
-    weld.avi
-    images/*.jpg
-  ...
-  sample_0090/
+## Architecture
+
+```
+Raw Welding Sample
+  audio.wav + images/*.png + (sensor.csv)
+         |                    |
+   Audio Features       Vision Features
+    (180 dims)            (128 dims)
+         |                    |
+         +-------- + --------+
+                   |
+          Concatenate (308 features)
+                   |
+          2-Pass Feature Selection (93 kept)
+                   |
+       Stage 1: Binary Gate
+       XGBoost + Isotonic Calibration
+       Threshold: 0.455 (Youden-J)
+                   |
+            Good <-+-> Defective
+                   |
+       Stage 2: 7-Class Multiclass
+       XGBoost (can override to "00")
+                   |
+           Final prediction
 ```
 
-- Evaluation helper files:
-- `test_data_manifest.csv`: file paths for each anonymized sample.
-- `test_data_ground_truth.csv`: mapping from `sample_id` to true label (for evaluator use).
-
-## Sensor Features (Number of Features)
-
-- Original labeled CSV schema has `10` columns:
-- `Date`, `Time`, `Part No`, `Pressure`, `CO2 Weld Flow`, `Feed`, `Primary Weld Current`, `Wire Consumed`, `Secondary Weld Voltage`, `Remarks`.
-- Core process/sensor channels used for modeling are typically `6` numeric features:
-- `Pressure`, `CO2 Weld Flow`, `Feed`, `Primary Weld Current`, `Wire Consumed`, `Secondary Weld Voltage`.
-- `test_data/sensor.csv` intentionally removes `Part No` to prevent ID leakage, so evaluation CSVs have `9` columns.
-
-## Concise and Informative Guideline
-
-1. Use `good_weld` and `defect_data_weld` only for training and validation.
-2. Split by run/group (not random rows) to avoid leakage across near-duplicate temporal segments.
-3. Treat each run/sample as multimodal (`sensor.csv` + audio + video + images), then build binary (`defect` vs `good`) and multi-class (`defect type`) models.
-4. Run final inference only on anonymized `test_data` and export predictions keyed by `sample_id`.
-5. Keep `test_data_ground_truth.csv` strictly for organizer-side scoring or final offline evaluation after predictions are frozen.
-6. Report both performance and confidence quality (for example: F1, Macro-F1, calibration/ECE) and include failure-case examples.
-
-## Phase 1: Data preparation + dataset + dashboard + overall analysis + feature engineering
-
-**Goal:** produce a clean, reproducible dataset + an analysis dashboard that explains what’s in the data and what signals might matter.
-
-**What they must do**
-
-* **Ingest the dataset**
-
-  * Load video + audio + labels/metadata.
-  * Validate files: missing, corrupt, mismatched IDs, inconsistent durations.
-* **Define the unit of prediction**
-
-  * Decide what one “sample” means (whole weld, fixed-length segment, windowed chunks, etc.).
-  * Ensure labels align to that unit.
-* **Create a reproducible split**
-
-  * Train/validation/test split that avoids leakage (split by session/part/run if applicable).
-  * Save split files so results are repeatable.
-* **Preprocess and standardize**
-
-  * Make audio/video consistent (sampling rate/FPS, resizing, normalization, trimming/padding policy).
-  * Handle variable length (padding, cropping, pooling, sliding windows).
-* **Feature engineering (optional, but if used it must be documented)**
-
-  * Produce derived signals/features from audio/video/metadata (any representation is fine).
-  * Keep a clear mapping from raw inputs → engineered inputs.
-* **Dashboard (must show)**
-
-  * Dataset overview: counts, durations, missing/corrupt stats.
-  * Label distributions: defect vs non-defect, defect-type counts.
-  * Representative examples: video preview + audio preview (waveform/spectrogram or equivalent).
-  * Basic data quality indicators: class imbalance, outliers, noise, sync issues (if relevant).
-  * Exportable reports: ability to save plots/tables or generate a summary.
-
-**Phase 1 output package**
-
-* `dataset/` or loader pipeline that can recreate the dataset
-* split definition files
-* dashboard app/notebook
-* short “data card” summary (1 page) describing assumptions and preprocessing choices
+**Key design:** The multiclass model includes the "00" (good) class, allowing it to override binary false positives -- a major contributor to our precision improvement.
 
 ---
 
-## Phase 2: Defect detection (binary classification) with confidence
+## Feature Engineering
 
-**Goal:** build a model that outputs **defect vs non-defect** plus a **confidence score** for each prediction.
+### Audio Features (180 dimensions)
 
-**What they must do**
+Physics-based features that capture weld defect acoustic signatures:
 
-* **Train a binary classifier**
+- **13 MFCCs** -- means, standard deviations, delta, and delta-delta coefficients
+- **Sub-band energy ratios** -- configuration-invariant frequency analysis
+- **Spectral entropy** -- acoustic disorder as a defect marker
+- **Spectral centroid, rolloff, bandwidth, contrast, flatness** -- multi-scale frequency descriptors
+- **Zero-crossing rate & RMS energy** -- temporal energy patterns
+- **Temporal pooling** -- mean, std, percentiles across time frames
 
-  * Input: audio/video (and any engineered features) per sample.
-  * Output: probability/score for “defect”.
-* **Produce confidence**
+### Vision Features (128 dimensions)
 
-  * Define what confidence means (typically a calibrated probability).
-  * Confidence must be reported per prediction.
-* **Set a decision rule**
+Weld bead geometry and surface quality from keyframe extraction:
 
-  * Thresholding policy to convert score → defect/non-defect.
-  * Threshold must be fixed for test-time scoring (not adjusted after seeing test labels).
-* **Evaluate on validation**
+- **Bead width & centre brightness** -- physical geometry measurement
+- **Laplacian variance** -- surface roughness quantification
+- **GLCM texture features** -- homogeneity vs. pitting analysis
+- **Temporal frame differencing** -- motion energy during welding
+- **Edge orientation entropy** -- regularity of bead edges
 
-  * Report core binary metrics (listed below).
-  * Show error breakdown (false positives/false negatives) and examples.
-* **Create an inference pipeline**
+### Feature Selection
 
-  * Script that takes the test split and writes predictions in the required format.
-
-**Phase 2 output package**
-
-* trained model checkpoint(s)
-* inference script (one command run)
-* `predictions_binary.csv` (or combined file) with:
-
-  * `sample_id`, `p_defect`, `pred_defect`, `confidence`
-* evaluation report/plots in the dashboard
+- **308 features** extracted per sample
+- **93 features** selected via two-pass importance ranking (top 80% cumulative importance)
+- Removes noise features that could bias toward majority classes
 
 ---
 
-## Phase 3: Defect type classification (multi-class)
+## Training Pipeline
 
-**Goal:** if a weld is defective, predict **which defect type**, with confidence.
-
-**What they must do**
-
-* **Train a defect-type classifier**
-
-  * Input: same sample representation.
-  * Output: defect type probabilities (or scores).
-* **Define handling of non-defect samples**
-
-  * Either:
-
-    * classify defect type **only when defect is predicted/known**, OR
-    * include “none” as a class.
-  * Whichever they choose, it must match the evaluation spec and be consistent.
-* **Report confidence for type**
-
-  * Provide a confidence score for the chosen defect type (top-1 probability or calibrated).
-* **Evaluate**
-
-  * Report multi-class metrics (listed below), especially per-class results due to imbalance.
-* **Integrate with Phase 2**
-
-  * Final output should be coherent: non-defect → type is “none”; defect → type predicted.
-
-**Phase 3 output package**
-
-* model checkpoint(s)
-* inference script producing:
-
-  * `pred_defect_type`, `p_type_*` (optional), `type_confidence`
-* evaluation report (per-type performance)
+- **Cross-validation:** GroupKFold(5) on `config_folder` -- prevents leakage from similar weld setups
+- **Hyperparameter search:** 60-iteration `RandomizedSearchCV` scored on Macro F1
+- **Calibration:** Isotonic regression on out-of-fold predictions
+- **Threshold optimization:** Youden J statistic (0.455) from CV probabilities
+- **Parallel training:** Binary and multiclass models train simultaneously via `ThreadPoolExecutor`
+- **Reproducibility:** Fixed seed (42), saved splits, cached features as `.npz`
 
 ---
 
-# Evaluation criteria
+## Quick Start
 
-## A) Model metrics (primary)
+### Prerequisites
 
-### Submission CSV (required)
-
-Teams must submit one CSV file with this exact schema:
-
-```csv
-sample_id,pred_label_code,p_defect
-sample_0001,11,0.94
-sample_0002,00,0.08
-...
-sample_0090,06,0.81
+```bash
+python 3.10+
+pip install -r requirements.txt
 ```
 
-Submission rules:
+### 1. Cache Features
 
-* Exactly `90` rows (one row per sample in `test_data_manifest.csv`)
-* `sample_id` must match exactly (`sample_0001` ... `sample_0090`), with no duplicates
-* `pred_label_code` must be one of: `00`, `01`, `02`, `04`, `06`, `11`
-* `p_defect` must be numeric in `[0,1]`
+```bash
+python cache_features.py
+```
 
-Scoring interpretation:
+Extracts audio + vision features for all training samples. Saves to `artifacts/feature_cache.npz`.
 
-* Binary prediction is derived as: `pred_defect = (pred_label_code != "00")`
-* Type prediction is the submitted `pred_label_code`
+### 2. Train Models
 
-### 1) Defect vs non-defect (binary)
+```bash
+python train_audiovisual.py
+```
 
-Use these as the core:
+Trains binary + multiclass XGBoost models with parallel execution. Saves models and metrics to `artifacts/`.
 
-* **F1 (Defect as positive class)**
-* **Precision / Recall (Defect)**
-* **ROC-AUC**
-* **PR-AUC**
-* **Confusion matrix counts** (TP/FP/FN/TN)
+### 3. Run Inference
 
-### 2) Defect type (multi-class)
+```bash
+python run_inference.py --test-dir ../test_data --output submission.csv
+```
 
-Use these:
+Generates submission CSV with `sample_id`, `pred_label_code`, `p_defect`.
 
-* **Macro F1** (treats each defect type equally, good for imbalance)
-* **Per-class Precision/Recall/F1**
-* **Weighted F1** (secondary)
+### 4. Launch Dashboard
 
-### 3) Confidence quality (recommended to include)
+```bash
+# Start API backend
+python api.py
 
-Because “confidence” that’s just vibes is worthless:
+# Start frontend (in a separate terminal)
+cd next-dashboard && npm run dev
+```
 
-* **Calibration metric**: **ECE (Expected Calibration Error)** (binary at minimum)
-
-**single final score:**
-
-* `FinalScore = 0.6 * Binary_F1 + 0.4 * Type_MacroF1`
+Dashboard runs at `http://localhost:3000` with FastAPI backend at `http://localhost:8000`.
 
 ---
 
-## B) Engineering & product quality (secondary)
+## Dashboard
 
-### UI / Dashboard (clean and usable)
+Built with **Next.js** + **FastAPI**, the dashboard provides:
 
-* Clear navigation, readable plots/tables, consistent labels
-* Shows the required dataset stats + evaluation views
-* Fast enough to use during a demo (no 5-minute refreshes)
+- **Overview** -- Dataset statistics, label distributions, data quality indicators
+- **Sample Explorer** -- Drill into any sample: audio waveform, video frames, sensor traces
+- **Evaluation** -- Binary metrics, confusion matrices, per-class F1 breakdown, ROC curves
+- **Data Models** -- Pipeline architecture visualization, feature importance, fit diagnostics
+- **Data Card** -- Dataset documentation, preprocessing assumptions, limitations
 
-### Clean code & reproducibility
+---
 
-* One-command run for training/inference
-* Clear folder structure, requirements/environment file
-* No hardcoded paths, no mystery constants without comments
-* Reproducible splits + fixed random seeds (where relevant)
+## Project Structure
 
-### Presentation & explanation
+```
+api.py                    # FastAPI backend serving data & metrics
+cache_features.py         # Feature extraction & caching pipeline
+train_audiovisual.py      # Model training with parallel execution
+run_inference.py          # Test inference & submission generation
+diagnose_fit.py           # Overfitting diagnostics
+requirements.txt          # Python dependencies
+submission.csv            # Latest submission output
+PITCH_AND_QA.md           # 4-min pitch script & Q&A prep
+DataCard.md               # Dataset documentation
+artifacts/                # Saved models, metrics, feature cache
+next-dashboard/           # Next.js frontend dashboard
+src/                      # Core source modules
+sampleData/               # Sample data for dashboard preview
+```
 
-* Clear statement of:
+---
 
-  * sample definition
-  * preprocessing assumptions
-  * model outputs and how confidence is computed
-  * strengths/weaknesses and common failure cases
-* Demo includes: dashboard + a few correctly/incorrectly predicted examples
+## Technical Decisions
+
+| Decision | Rationale |
+|---|---|
+| XGBoost over deep learning | 2,330 samples too small for CNNs/transformers; XGBoost excels on tabular features |
+| Audio-visual only (no sensor) | Only 2/90 test samples have sensor CSV; AV pipeline works universally |
+| 7-class multiclass (inc. "00") | Allows model to override binary false positives |
+| GroupKFold by config_folder | Prevents leakage from similar weld configurations |
+| Isotonic calibration | Provides well-calibrated probabilities for reliable confidence scores |
+| Parallel training | Binary + multiclass train simultaneously, halving training time |
+
+---
+
+## Team
+
+**AI-Beats** -- Therness Hackathon 2025
+
+---
+
+## License
+
+This project was developed for the Therness Hackathon competition.

@@ -94,9 +94,9 @@ def get_metrics():
         return {}
 
     return {
-        "binary": load_json("artifacts/binary_metrics.json"),
-        "multiclass": load_json("artifacts/multiclass_metrics.json"),
-        "pipeline": load_json("artifacts/pipeline_metrics.json"),
+        "binary": load_json("artifacts/binary_av_metrics.json"),
+        "multiclass": load_json("artifacts/multiclass_av_metrics.json"),
+        "pipeline": load_json("artifacts/pipeline_av_metrics.json"),
     }
 
 @app.get("/diagnostics")
